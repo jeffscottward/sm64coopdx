@@ -25,6 +25,7 @@
 #include "audio/audio_null.h"
 #include "audio/audio_web.h"
 #include "pc/web/web_storage.h"
+#include "pc/web/web_rom_loader.h"
 
 #include "rom_assets.h"
 #include "rom_checker.h"
@@ -561,6 +562,37 @@ int main(int argc, char *argv[]) {
     }
 
     // render the rom setup screen
+#ifdef TARGET_WEB
+    // Web builds: if no ROM exists in IDBFS persistent storage, use the
+    // browser file picker to let the user provide one. Loop until a valid
+    // ROM is loaded or the user gives up. The file picker writes the ROM
+    // into the Emscripten VFS at the save directory, then main_rom_handler()
+    // validates it via MD5 like it does on native.
+    if (!main_rom_handler()) {
+        while (1) {
+            if (!web_check_rom_exists()) {
+                int loaded = web_load_rom_from_picker();
+                if (!loaded) {
+                    // User cancelled — inform and retry
+                    EM_ASM({
+                        alert('A valid Super Mario 64 US ROM (.z64) is required to play.\nPlease select your ROM file.');
+                    });
+                    continue;
+                }
+            }
+            // ROM file is in the VFS — validate it
+            if (main_rom_handler()) {
+                break; // Valid ROM found
+            }
+            // ROM was invalid — let the user try again
+            EM_ASM({
+                alert('The selected file is not a valid vanilla SM64 US ROM.\nPlease select the correct ROM file.');
+            });
+        }
+        // Persist the newly loaded ROM to IndexedDB for future sessions
+        web_storage_save();
+    }
+#else
     if (!main_rom_handler()) {
 #ifdef LOADING_SCREEN_SUPPORTED
         if (!gCLIOpts.hideLoadingScreen) {
@@ -572,6 +604,7 @@ int main(int argc, char *argv[]) {
             return 0;
         }
     }
+#endif
 
     // start the thread for setting up the game
 #ifdef LOADING_SCREEN_SUPPORTED

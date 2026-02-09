@@ -26,7 +26,7 @@ This phase implements the browser-based ROM loading workflow. Since SM64 ROM dis
   - Create the corresponding header `src/pc/web/web_storage.h`
   > **Completed:** Created `web_storage.h` (header with `__EMSCRIPTEN__`-guarded declarations and native no-op stubs) and `web_storage.c` (implementation using `EM_ASM` to mount IDBFS at `/save` matching `WEB_USER_PATH`, with `FS.syncfs(true,...)` for init and `FS.syncfs(false,...)` for save). `web_storage_init()` uses `emscripten_sleep()` polling to wait for the initial IndexedDB-to-MEMFS sync to complete before returning. `web_storage_save()` is fire-and-forget async. Integration: `web_storage_init()` called in `pc_main.c` after `fs_init()` but before `configfile_load()`; `web_storage_save()` called at the end of `configfile_save()`, after successful `osEepromLongWrite()`, and as a final flush in `game_deinit()`. Tests pass for both native and web-simulated builds.
 
-- [ ] Integrate ROM loading into the game startup flow in `src/pc/pc_main.c`:
+- [x] Integrate ROM loading into the game startup flow in `src/pc/pc_main.c`:
   - After `fs_init()` but before `main_rom_handler()`, add web-specific ROM loading logic:
     - First check if ROM already exists in persistent storage (IDBFS)
     - If not, show a file picker overlay and wait for the user to provide one
@@ -34,6 +34,7 @@ This phase implements the browser-based ROM loading workflow. Since SM64 ROM dis
   - The `render_rom_setup_screen()` function (used when no ROM is found) could be adapted for web, OR replaced with a simpler HTML-based UI overlay
   - For the initial MVP, a simple approach: use `EM_ASM` to show a JavaScript `alert()` or HTML overlay prompting for the ROM, then use the file picker
   - Guard all of this with `#ifdef TARGET_WEB`
+  > **Completed:** Added `#include "pc/web/web_rom_loader.h"` to `pc_main.c` and implemented `#ifdef TARGET_WEB` guarded ROM loading flow in `main()`. The flow: (1) `main_rom_handler()` first checks if a previously-persisted ROM exists in IDBFS, (2) if not found, enters a retry loop calling `web_check_rom_exists()` then `web_load_rom_from_picker()` for the browser file picker, (3) validates via `main_rom_handler()` after each load attempt, (4) uses `EM_ASM` with `alert()` for user feedback on cancel or invalid ROM, (5) calls `web_storage_save()` after successful load to persist to IndexedDB. The native code path (`#else`) is unchanged, preserving `render_rom_setup_screen()` for desktop builds. Tests pass for both native and web-simulated builds.
 
 - [ ] Handle the `extract_assets.py` and ROM asset pipeline for web:
   - The ROM asset extraction (`rom_assets_load()` at line 456 of pc_main.c) reads the ROM file and extracts textures, models, sounds, etc. at runtime
