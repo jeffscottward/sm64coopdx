@@ -1,35 +1,45 @@
 #ifdef WAPI_SDL2
 
-#ifdef __MINGW32__
-#define FOR_WINDOWS 1
-#else
-#define FOR_WINDOWS 0
-#endif
+#ifdef __EMSCRIPTEN__
+# include <SDL2/SDL.h>
+# include <GLES2/gl2.h>
+# include <GLES2/gl2ext.h>
+# include <emscripten.h>
+# include <emscripten/html5.h>
+#else /* !__EMSCRIPTEN__ */
 
-#if defined(_WIN32) || defined(_WIN64)
-#include <windows.h>
-#endif
+# ifdef __MINGW32__
+#  define FOR_WINDOWS 1
+# else
+#  define FOR_WINDOWS 0
+# endif
 
-#if FOR_WINDOWS
-#define GLEW_STATIC
-#include <GL/glew.h>
-#include <SDL2/SDL.h>
-#define GL_GLEXT_PROTOTYPES 1
-#include <SDL2/SDL_opengl.h>
-#else
-#include <SDL2/SDL.h>
-#define GL_GLEXT_PROTOTYPES 1
+# if defined(_WIN32) || defined(_WIN64)
+#  include <windows.h>
+# endif
 
-#ifdef OSX_BUILD
-#include <SDL2/SDL_opengl.h>
-#else
-#include <SDL2/SDL_opengles2.h>
-#endif
+# if FOR_WINDOWS
+#  define GLEW_STATIC
+#  include <GL/glew.h>
+#  include <SDL2/SDL.h>
+#  define GL_GLEXT_PROTOTYPES 1
+#  include <SDL2/SDL_opengl.h>
+# else
+#  include <SDL2/SDL.h>
+#  define GL_GLEXT_PROTOTYPES 1
+#  ifdef OSX_BUILD
+#   include <SDL2/SDL_opengl.h>
+#  else
+#   include <SDL2/SDL_opengles2.h>
+#  endif
+# endif
 
-#endif // End of OS-Specific GL defines
+#endif /* __EMSCRIPTEN__ */
 
 #include <stdio.h>
+#ifndef __EMSCRIPTEN__
 #include <unistd.h>
+#endif
 
 #include "gfx_window_manager_api.h"
 #include "gfx_screen_config.h"
@@ -69,10 +79,23 @@ static void (*m_scroll)(float, float) = NULL;
 #define IS_FULLSCREEN() ((SDL_GetWindowFlags(wnd) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
 
 static inline void gfx_sdl_set_vsync(const bool enabled) {
+#ifndef __EMSCRIPTEN__
+    /* In browsers, requestAnimationFrame already provides vsync.
+       SDL_GL_SetSwapInterval is meaningless under Emscripten. */
     SDL_GL_SetSwapInterval(enabled);
+#else
+    (void)enabled;
+#endif
 }
 
 static void gfx_sdl_set_fullscreen(void) {
+#ifdef __EMSCRIPTEN__
+    /* In browsers, fullscreen is managed by the HTML5 Fullscreen API.
+       SDL_WINDOW_FULLSCREEN_DESKTOP doesn't map properly to browser
+       fullscreen. Requesting fullscreen must be triggered by a user
+       gesture (click/keypress) — ignore programmatic fullscreen requests. */
+    (void)0;
+#else
     if (configWindow.reset)
         configWindow.fullscreen = false;
     if (configWindow.fullscreen == IS_FULLSCREEN())
@@ -84,9 +107,19 @@ static void gfx_sdl_set_fullscreen(void) {
         SDL_ShowCursor(1);
         configWindow.exiting_fullscreen = true;
     }
+#endif
 }
 
 static void gfx_sdl_reset_dimension_and_pos(void) {
+#ifdef __EMSCRIPTEN__
+    /* In browsers, window position is meaningless and canvas size is
+       controlled by CSS / the HTML container. Only update vsync state. */
+    if (configWindow.reset) {
+        configWindow.w = DESIRED_SCREEN_WIDTH;
+        configWindow.h = DESIRED_SCREEN_HEIGHT;
+        configWindow.reset = false;
+    }
+#else
     if (configWindow.exiting_fullscreen) {
         configWindow.exiting_fullscreen = false;
         SDL_ShowCursor(0);
@@ -109,33 +142,57 @@ static void gfx_sdl_reset_dimension_and_pos(void) {
     SDL_SetWindowPosition(wnd, xpos, ypos);
     // in case vsync changed
     gfx_sdl_set_vsync(configWindow.vsync);
+#endif
 }
 
 static void gfx_sdl_init(const char *window_title) {
-#if defined(_WIN32) || defined(_WIN64)
+#if !defined(__EMSCRIPTEN__) && (defined(_WIN32) || defined(_WIN64))
     SetProcessDPIAware();
 #endif
 
+#ifndef __EMSCRIPTEN__
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
+#endif
     SDL_Init(SDL_INIT_VIDEO);
     SDL_StartTextInput();
 
+#ifndef __EMSCRIPTEN__
+    /* MSAA is configured via SDL attributes on native platforms.
+       In WebGL, MSAA is controlled by the canvas context attributes
+       and may not be available on all browsers. Skip for web. */
     if (configWindow.msaa > 0) {
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, configWindow.msaa);
     } else {
         SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     }
+#endif
 
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-#ifdef USE_GLES
+#ifdef __EMSCRIPTEN__
+    /* Emscripten's SDL2 port creates a WebGL context from the HTML5 canvas.
+       Request an ES 2.0 profile to match the FULL_ES2=1 build flag. */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#elif defined(USE_GLES)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);  // These attributes allow for hardware acceleration on RPis.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 #endif
 
+#ifdef __EMSCRIPTEN__
+    /* In browsers, SDL_CreateWindow maps to the HTML5 canvas element.
+       Window position is meaningless — use 0,0 with the desired size. */
+    wnd = SDL_CreateWindow(
+        window_title,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        configWindow.w, configWindow.h,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    );
+#else
     int xpos = (configWindow.x == WAPI_WIN_CENTERPOS) ? SDL_WINDOWPOS_CENTERED : configWindow.x;
     int ypos = (configWindow.y == WAPI_WIN_CENTERPOS) ? SDL_WINDOWPOS_CENTERED : configWindow.y;
 
@@ -144,14 +201,19 @@ static void gfx_sdl_init(const char *window_title) {
         xpos, ypos, configWindow.w, configWindow.h,
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
+#endif
     ctx = SDL_GL_CreateContext(wnd);
 
     gfx_sdl_set_vsync(configWindow.vsync);
 
+#ifndef __EMSCRIPTEN__
+    /* Fullscreen in browsers is handled via the HTML5 Fullscreen API,
+       not SDL's desktop fullscreen mode. Skip on web. */
     gfx_sdl_set_fullscreen();
     if (configWindow.fullscreen) {
         SDL_ShowCursor(SDL_DISABLE);
     }
+#endif
 
     controller_bind_init();
 }
@@ -170,11 +232,15 @@ static void gfx_sdl_get_dimensions(uint32_t *width, uint32_t *height) {
 static void gfx_sdl_onkeydown(int scancode) {
     const Uint8 *state = SDL_GetKeyboardState(NULL);
 
+#ifndef __EMSCRIPTEN__
+    /* Alt+Enter fullscreen toggle is not used in browsers.
+       Browser fullscreen requires the HTML5 Fullscreen API. */
     if ((state[SDL_SCANCODE_LALT] || state[SDL_SCANCODE_RALT]) && state[SDL_SCANCODE_RETURN]) {
         configWindow.fullscreen = !configWindow.fullscreen;
         configWindow.settings_changed = true;
         return;
     }
+#endif
 
     if (kb_key_down)
         kb_key_down(translate_sdl_scancode(scancode));
@@ -190,6 +256,9 @@ static void gfx_sdl_onscroll(float x, float y) {
         m_scroll(x, y);
 }
 
+#ifndef __EMSCRIPTEN__
+/* File drop is not supported in browser builds. Browser file access
+   requires the HTML5 File API, which would be handled in JavaScript. */
 static void gfx_sdl_ondropfile(char* path) {
 #ifdef _WIN32
     char portable_path[SYS_MAX_PATH];
@@ -208,6 +277,7 @@ static void gfx_sdl_ondropfile(char* path) {
     }
 #endif
 }
+#endif /* !__EMSCRIPTEN__ */
 
 static void gfx_sdl_handle_events(void) {
     SDL_Event event;
@@ -229,6 +299,14 @@ static void gfx_sdl_handle_events(void) {
                 gfx_sdl_onscroll(event.wheel.preciseX, event.wheel.preciseY);
                 break;
             case SDL_WINDOWEVENT:
+#ifdef __EMSCRIPTEN__
+                /* In browsers, only track canvas size changes. Window
+                   position and fullscreen state are managed by the browser. */
+                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    configWindow.w = event.window.data1;
+                    configWindow.h = event.window.data2;
+                }
+#else
                 if (!IS_FULLSCREEN()) {
                     switch (event.window.event) {
                         case SDL_WINDOWEVENT_MOVED:
@@ -243,10 +321,13 @@ static void gfx_sdl_handle_events(void) {
                             break;
                     }
                 }
+#endif
                 break;
+#ifndef __EMSCRIPTEN__
             case SDL_DROPFILE:
                 gfx_sdl_ondropfile(event.drop.file);
                 break;
+#endif
             case SDL_QUIT:
                 game_exit();
                 break;
@@ -294,10 +375,17 @@ static void gfx_sdl_delay(u32 ms) {
 }
 
 static int gfx_sdl_get_max_msaa(void) {
+#ifdef __EMSCRIPTEN__
+    /* GL_MAX_SAMPLES is not available in WebGL 1.0 (ES 2.0).
+       Return 0 to indicate no MSAA support from the SDL layer.
+       WebGL MSAA is controlled by canvas context attributes instead. */
+    return 0;
+#else
     int maxSamples = 0;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     if (maxSamples > 16) { maxSamples = 16; }
     return maxSamples;
+#endif
 }
 
 static void gfx_sdl_set_window_title(const char* title) {
