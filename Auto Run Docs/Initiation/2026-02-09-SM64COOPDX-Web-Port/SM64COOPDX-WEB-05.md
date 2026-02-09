@@ -44,7 +44,7 @@ This phase is the critical integration step where we attempt the first full Emsc
   - Update `Makefile.web` with corrected linker flags
   > **Completed 2026-02-09:** All native linker flags (`-lcurl`, `-ldl`, `-lpthread`, `-latomic`, `-lz`, `-rdynamic`, `-no-pie`, `-march=native`) are **already excluded** — Makefile.web passes LDFLAGS on the command line which overrides the main Makefile's `:=` and `+=` assignments completely. Emscripten ports handle zlib (`-s USE_ZLIB=1`), SDL2 (`-s USE_SDL=2`), and OpenGL ES (`-s FULL_ES2=1`). For Lua: downloaded Lua 5.3.5 source code (35 files), placed in `lib/lua/src/`, compiled 33 library files (excluding lua.c/luac.c which contain main()) with `emcc -O2 -DLUA_USE_POSIX`, archived with `emar rcs` into `lib/lua/web/liblua53.a`. Added `lua-web` target to Makefile.web as a prerequisite of `web`. CoopNet (COOPNET=0) and Discord (DISCORD_SDK=0) confirmed disabled. **Build now completes successfully** — produces sm64coopdx.html (9K), sm64coopdx.js (452K), sm64coopdx.wasm (62MB), sm64coopdx.data (205K).
 
-- [ ] Compile Lua 5.3 for Emscripten:
+- [x] Compile Lua 5.3 for Emscripten:
   - Read `lib/lua/include/` to understand the Lua version and header structure
   - The precompiled Lua libraries (`lib/lua/linux/liblua53.a`, etc.) are native — they won't work with WASM
   - Add a build step in `Makefile.web` that compiles Lua 5.3 from source using `emcc`:
@@ -54,6 +54,14 @@ This phase is the critical integration step where we attempt the first full Emsc
     - Create `lib/lua/web/liblua53.a` using `emar`
     - Link against this in the web build
   - Alternatively, use Emscripten's Lua port if available via `-s USE_LUA=1` (check availability)
+  > **Completed 2026-02-09:** This task was fully completed as part of Task 3's linker resolution. Verification confirms all subtasks done:
+  > - **Lua version**: 5.3.5 confirmed via `LUA_VERSION_NUM 503` in `lib/lua/include/lua.h`
+  > - **Source files**: 35 `.c` files in `lib/lua/src/` (downloaded from lua.org); 33 compiled (excluding `lua.c` and `luac.c` which contain standalone `main()`)
+  > - **Build integration**: `Makefile.web` has `lua-web` target compiling each `.c` with `emcc -O2 -DLUA_USE_POSIX -I$(LUA_INC_DIR)`, archiving with `emar rcs` into `lib/lua/web/liblua53.a` (281KB)
+  > - **Dependency chain**: `web: lua-web` ensures Lua is built before the main game link step
+  > - **Linking**: LDFLAGS include `-Llib/lua/web -l:liblua53.a` to resolve all Lua symbols
+  > - **Emscripten port**: No `-s USE_LUA=1` available; source compilation was the correct approach
+  > - **Clean target**: `clean-lua-web` removes `lib/lua/web/` directory; chained from `clean-web`
 
 - [ ] Fix remaining compilation errors iteratively:
   - Run the build again: `make -f Makefile.web -j$(nproc) 2>&1 | head -200`
