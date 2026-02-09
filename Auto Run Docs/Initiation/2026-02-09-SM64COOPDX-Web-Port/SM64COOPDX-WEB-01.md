@@ -83,11 +83,21 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   > - Callers (`pc_main.c`, `djui_panel_host.c`, `djui_panel_main.c`, `djui_panel_join.c`) need no changes — they check `gUpdateMessage` which is always `false` for web, and call functions that are valid no-ops.
   > - Verified: Compiles cleanly with `gcc -DTARGET_WEB -I src -I src/pc`.
 
-- [ ] Handle the `rom_checker.cpp` file for web builds. Read `src/pc/rom_checker.cpp` fully and:
+- [x] Handle the `rom_checker.cpp` file for web builds. Read `src/pc/rom_checker.cpp` fully and:
   - The `<filesystem>` header and `std::filesystem` may not be fully supported in Emscripten
   - Wrap filesystem-dependent code paths with `#ifndef TARGET_WEB` guards
   - For web builds, provide a simplified ROM validation path that checks the ROM data from an in-memory buffer (the ROM will be loaded via browser file picker into Emscripten's virtual filesystem)
   - The `main_rom_handler()` function should still work — it just needs the ROM file to exist in the virtual filesystem at the expected path
+
+  > **Completed 2026-02-09:** Wrapped all `std::filesystem`-dependent code in `#ifndef TARGET_WEB` / `#endif` guards. Structure:
+  > - **`<filesystem>` include and `namespace fs` alias**: Only included for native builds. Web builds use `<cstdio>` and `<cstring>` instead.
+  > - **Web `is_rom_valid()`**: Same MD5 validation logic (via `mod_cache_md5`) but replaces `std::filesystem::exists()` with a `web_file_exists()` helper using `fopen`, and replaces `std::filesystem::copy_file()` with C file I/O (`fopen`/`fread`/`fwrite`). ROM validation works identically — only the file operations differ.
+  > - **Web `scan_path_for_rom()`**: Instead of `std::filesystem::directory_iterator` (unreliable on Emscripten VFS), directly checks expected ROM filenames from the `sVanillaMD5` lookup table (e.g., `baserom.us.z64`). This is sufficient since the ROM naming convention is fixed.
+  > - **`legacy_folder_handler()`**: No-op for web builds (no legacy `tmp` → `.tmp` folder migration needed in virtual filesystem).
+  > - **`main_rom_handler()`**: Shared across both paths — calls `scan_path_for_rom()` and `sys_exe_path_dir()` which work correctly for both web and native.
+  > - **`rom_on_drop_file()`**: Unchanged — uses `is_rom_valid()` which works correctly in both modes (guarded by `LOADING_SCREEN_SUPPORTED`).
+  > - Native path: original `std::filesystem` implementation preserved unchanged.
+  > - Verified: Both web (with `TARGET_WEB=1`) and native (without) code paths compile cleanly with `g++ -std=c++17`.
 
 - [ ] Update `src/pc/pc_main.c` for Emscripten main loop compatibility:
   - Add `#ifdef __EMSCRIPTEN__` / `#include <emscripten.h>` at the top
