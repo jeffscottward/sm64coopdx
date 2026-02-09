@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#111111">
+  <title>SM64CoopDX — Web</title>
+  <!--
+    COOP/COEP headers (required if using SharedArrayBuffer for pthreads):
+
+    The web server MUST send these HTTP headers for SharedArrayBuffer to be
+    available. If using python3 -m http.server for local testing, you will
+    need a wrapper that injects these headers.
+
+      Cross-Origin-Opener-Policy: same-origin
+      Cross-Origin-Embedder-Policy: require-corp
+
+    Without these headers, SharedArrayBuffer is undefined and any pthread
+    features will fail at runtime.
+  -->
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #111;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    #canvas {
+      display: none;
+      border: none;
+      outline: none;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    /* ROM upload overlay — visible before the game starts */
+    #rom-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      text-align: center;
+      padding: 32px;
+    }
+
+    #rom-overlay h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    #rom-overlay p {
+      color: #999;
+      font-size: 0.95rem;
+      max-width: 420px;
+      line-height: 1.5;
+    }
+
+    #rom-upload-btn {
+      display: inline-block;
+      padding: 14px 36px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      background: #e03030;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    #rom-upload-btn:hover {
+      background: #c02020;
+    }
+
+    #rom-upload-btn:active {
+      background: #a01818;
+    }
+
+    /* Loading overlay — shown while WASM boots and assets extract */
+    #loading-overlay {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      padding: 32px;
+    }
+
+    #loading-text {
+      font-size: 1rem;
+      color: #ccc;
+    }
+
+    #progress-bar-outer {
+      width: 320px;
+      max-width: 80vw;
+      height: 12px;
+      background: #333;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    #progress-bar-inner {
+      width: 0%;
+      height: 100%;
+      background: #e03030;
+      border-radius: 6px;
+      transition: width 0.2s;
+    }
+
+    /* Error display */
+    #error-overlay {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      padding: 32px;
+    }
+
+    #error-overlay p {
+      color: #f66;
+      font-size: 0.95rem;
+      max-width: 520px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <!-- ROM upload screen (visible initially) -->
+    <div id="rom-overlay">
+      <h1>SM64CoopDX</h1>
+      <p>
+        This is an unofficial web port. You must provide your own
+        <strong>Super Mario 64</strong> US ROM file
+        (<code>.z64</code> / <code>.n64</code> / <code>.v64</code>).
+      </p>
+      <button id="rom-upload-btn">Select ROM File</button>
+      <p><small>Your ROM is processed locally and never uploaded to any server.</small></p>
+    </div>
+
+    <!-- Loading indicator (shown while WASM loads) -->
+    <div id="loading-overlay">
+      <h1>SM64CoopDX</h1>
+      <div id="loading-text">Loading...</div>
+      <div id="progress-bar-outer">
+        <div id="progress-bar-inner"></div>
+      </div>
+    </div>
+
+    <!-- Error display -->
+    <div id="error-overlay">
+      <h1>SM64CoopDX</h1>
+      <p id="error-text">An error occurred.</p>
+      <button id="rom-upload-btn-retry" onclick="location.reload()">Reload</button>
+    </div>
+
+    <!-- Game canvas (hidden until the game engine initializes it) -->
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+  </div>
+
+  <script>
+    /**
+     * Emscripten Module configuration.
+     *
+     * This object is read by the Emscripten-generated JS glue code. It must
+     * be defined BEFORE the glue script ({{{ SCRIPT }}} below) is loaded.
+     */
+    var Module = {
+      /* Target the canvas element for WebGL rendering */
+      canvas: (function() {
+        var c = document.getElementById('canvas');
+        c.addEventListener('webglcontextlost', function(e) {
+          alert('WebGL context lost. Please reload the page.');
+          e.preventDefault();
+        }, false);
+        return c;
+      })(),
+
+      /**
+       * setStatus — called by Emscripten to report loading progress.
+       *
+       * The status string format is either:
+       *   "Downloading data... (X/Y)"  — with byte counts
+       *   "Some status message"        — without progress numbers
+       *   ""                           — done
+       */
+      setStatus: function(text) {
+        var loadingOverlay = document.getElementById('loading-overlay');
+        var loadingText = document.getElementById('loading-text');
+        var progressBar = document.getElementById('progress-bar-inner');
+
+        if (!text) {
+          /* Empty string = loading complete */
+          loadingOverlay.style.display = 'none';
+          return;
+        }
+
+        /* Show loading overlay if not already visible */
+        var romOverlay = document.getElementById('rom-overlay');
+        if (romOverlay.style.display !== 'none') {
+          romOverlay.style.display = 'none';
+          loadingOverlay.style.display = 'flex';
+        }
+
+        loadingText.textContent = text;
+
+        /* Parse progress from "Downloading data... (X/Y)" format */
+        var m = text.match(/\((\d+(?:\.\d+)?)\/?(\d+(?:\.\d+)?)\)/);
+        if (m) {
+          var current = parseFloat(m[1]);
+          var total = parseFloat(m[2]);
+          if (total > 0) {
+            progressBar.style.width = ((current / total) * 100).toFixed(1) + '%';
+          }
+        }
+      },
+
+      /**
+       * onRuntimeInitialized — called once the WASM module is ready.
+       *
+       * At this point, the game's main() is about to be called. The ROM
+       * file picker (triggered from C via EM_ASM) will appear if needed.
+       * We hide the loading overlay and show the canvas.
+       */
+      onRuntimeInitialized: function() {
+        document.getElementById('loading-overlay').style.display = 'none';
+        var canvas = document.getElementById('canvas');
+        canvas.style.display = 'block';
+
+        /* Size the canvas to fill the viewport */
+        function resizeCanvas() {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+      },
+
+      /* Print stdout to browser console */
+      print: function(text) {
+        if (arguments.length > 1) {
+          text = Array.prototype.slice.call(arguments).join(' ');
+        }
+        console.log(text);
+      },
+
+      /* Print stderr to browser console as warnings */
+      printErr: function(text) {
+        if (arguments.length > 1) {
+          text = Array.prototype.slice.call(arguments).join(' ');
+        }
+        console.warn(text);
+      }
+    };
+
+    /* When status is set before the overlays exist, queue it */
+    Module.setStatus('Downloading...');
+
+    /* Handle uncaught errors */
+    window.onerror = function(message, url, line, col, error) {
+      var loadingOverlay = document.getElementById('loading-overlay');
+      var errorOverlay = document.getElementById('error-overlay');
+      var errorText = document.getElementById('error-text');
+
+      loadingOverlay.style.display = 'none';
+      document.getElementById('rom-overlay').style.display = 'none';
+      document.getElementById('canvas').style.display = 'none';
+      errorOverlay.style.display = 'flex';
+      errorText.textContent = 'Error: ' + message;
+    };
+  </script>
+
+  <!--
+    Emscripten glue code.
+    The {{{ SCRIPT }}} placeholder is replaced by Emscripten's linker with the
+    appropriate <script> tag pointing to the generated .js file.
+  -->
+  {{{ SCRIPT }}}
+</body>
+</html>

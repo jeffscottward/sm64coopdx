@@ -60,6 +60,7 @@ WEB_LDFLAGS := \
 	-s ASYNCIFY_STACK_SIZE=65536 \
 	--preload-file $(BUILD_DIR_WEB)/lang@/lang \
 	--preload-file $(BUILD_DIR_WEB)/dynos@/dynos \
+	--shell-file src/pc/web/shell.html \
 	-lidbfs.js
 
 # Variables passed to the main Makefile
