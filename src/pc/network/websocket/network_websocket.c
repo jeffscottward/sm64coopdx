@@ -251,6 +251,13 @@ void ns_websocket_send_join_command(const char* roomCode) {
         LOG_ERROR("WebSocket: cannot send join command, not connected");
         return;
     }
+    // Validate room code: only alphanumeric characters allowed (prevents JSON injection)
+    for (const char* p = roomCode; *p; p++) {
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9'))) {
+            LOG_ERROR("WebSocket: invalid room code character '%c'", *p);
+            return;
+        }
+    }
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "{\"type\":\"join\",\"roomCode\":\"%s\"}", roomCode);
     emscripten_websocket_send_utf8_text(sWebSocket, cmd);
@@ -288,8 +295,12 @@ static bool ns_websocket_initialize(enum NetworkType networkType, UNUSED bool re
     sPendingHost = false;
 
     // Build the WebSocket URL from config
-    // Default: ws://localhost:8765
+    // Priority: SM64_WS_RELAY_URL (build-time define) > configWebSocketRelay (user setting)
     const char* relayUrl = configWebSocketRelay;
+#ifdef SM64_WS_RELAY_URL
+    // Build-time override: baked in via SM64_WS_RELAY make variable
+    relayUrl = SM64_WS_RELAY_URL;
+#endif
     if (relayUrl == NULL || relayUrl[0] == '\0') {
         relayUrl = "ws://localhost:8765";
     }
@@ -357,7 +368,9 @@ static void ns_websocket_clear_id(u8 localIndex) {
 }
 
 static void* ns_websocket_dup_addr(u8 localIndex) {
+    if (localIndex >= MAX_PLAYERS) { return NULL; }
     void* address = malloc(sizeof(s64));
+    if (!address) { return NULL; }
     memcpy(address, &sClientIds[localIndex], sizeof(s64));
     return address;
 }

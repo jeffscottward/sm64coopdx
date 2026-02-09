@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "djui.h"
 #include "djui_panel.h"
 #include "djui_panel_menu.h"
@@ -18,6 +19,9 @@
 
 static struct DjuiRect* sRectPort = NULL;
 static struct DjuiInputbox* sInputboxPort = NULL;
+#ifdef TARGET_WEB
+static struct DjuiInputbox* sInputboxRelayUrl = NULL;
+#endif
 #ifdef COOPNET
 static struct DjuiRect* sRectPassword = NULL;
 static struct DjuiInputbox* sInputboxPassword = NULL;
@@ -27,6 +31,37 @@ static void djui_panel_host_network_system_change(UNUSED struct DjuiBase* base) 
     djui_base_set_visible(&sRectPassword->base, (configNetworkSystem == NS_COOPNET));
     djui_base_set_enabled(&sInputboxPort->base, (configNetworkSystem == NS_SOCKET));
     djui_base_set_enabled(&sInputboxPassword->base, (configNetworkSystem == NS_COOPNET));
+}
+#endif
+
+#ifdef TARGET_WEB
+static void djui_panel_host_relay_url_text_change(struct DjuiBase* caller) {
+    struct DjuiInputbox* inputbox = (struct DjuiInputbox*)caller;
+    size_t len = strlen(inputbox->buffer);
+    // Validate: must start with ws:// or wss://, have content after scheme, and fit in config
+    bool valid = (strncmp(inputbox->buffer, "ws://", 5) == 0 ||
+                  strncmp(inputbox->buffer, "wss://", 6) == 0);
+    if (valid && len > 6 && len < MAX_CONFIG_STRING) {
+        djui_inputbox_set_text_color(inputbox, 0, 0, 0, 255);
+        snprintf(configWebSocketRelay, MAX_CONFIG_STRING, "%s", inputbox->buffer);
+    } else {
+        djui_inputbox_set_text_color(inputbox, 255, 0, 0, 255);
+    }
+}
+
+static void djui_panel_host_relay_url_on_focus_end(struct DjuiBase* caller) {
+    struct DjuiInputbox* inputbox = (struct DjuiInputbox*)caller;
+    bool valid = (strncmp(inputbox->buffer, "ws://", 5) == 0 ||
+                  strncmp(inputbox->buffer, "wss://", 6) == 0) &&
+                 strlen(inputbox->buffer) > 6;
+    if (!valid) {
+        // Revert to current config value
+        djui_inputbox_set_text(inputbox, configWebSocketRelay);
+    } else {
+        snprintf(configWebSocketRelay, MAX_CONFIG_STRING, "%s", inputbox->buffer);
+    }
+    djui_inputbox_set_text_color(inputbox, 0, 0, 0, 255);
+    djui_inputbox_on_focus_end(&inputbox->base);
 }
 #endif
 
@@ -120,7 +155,26 @@ void djui_panel_host_create(struct DjuiBase* caller) {
         djui_base_set_size(&textRelay->base, 1.0f, 64);
         djui_base_set_color(&textRelay->base, 220, 220, 220, 255);
 
-        // Hidden port inputbox (required by djui_panel_host_port_valid)
+        // Relay URL input field
+        struct DjuiRect* rectRelayUrl = djui_rect_container_create(body, 32);
+        {
+            struct DjuiText* textRelayLabel = djui_text_create(&rectRelayUrl->base, DLANG(HOST, RELAY_URL));
+            djui_base_set_size_type(&textRelayLabel->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+            djui_base_set_color(&textRelayLabel->base, 220, 220, 220, 255);
+            djui_base_set_size(&textRelayLabel->base, 0.35f, 64);
+            djui_base_set_alignment(&textRelayLabel->base, DJUI_HALIGN_LEFT, DJUI_VALIGN_TOP);
+            djui_text_set_drop_shadow(textRelayLabel, 64, 64, 64, 100);
+
+            sInputboxRelayUrl = djui_inputbox_create(&rectRelayUrl->base, MAX_CONFIG_STRING);
+            djui_base_set_size_type(&sInputboxRelayUrl->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+            djui_base_set_size(&sInputboxRelayUrl->base, 0.65f, 32);
+            djui_base_set_alignment(&sInputboxRelayUrl->base, DJUI_HALIGN_RIGHT, DJUI_VALIGN_TOP);
+            djui_inputbox_set_text(sInputboxRelayUrl, configWebSocketRelay);
+            djui_interactable_hook_value_change(&sInputboxRelayUrl->base, djui_panel_host_relay_url_text_change);
+            djui_interactable_hook_focus(&sInputboxRelayUrl->base, djui_inputbox_on_focus_begin, NULL, djui_panel_host_relay_url_on_focus_end);
+        }
+
+        // Hidden port inputbox (sRectPort/sInputboxPort referenced as static globals)
         struct DjuiRect* rectHidden = djui_rect_container_create(body, 0);
         djui_base_set_visible(&rectHidden->base, false);
         sRectPort = rectHidden;

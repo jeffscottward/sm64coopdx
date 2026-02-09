@@ -118,11 +118,29 @@ This phase implements multiplayer support for the web port by creating a new `Ne
     - `[JOIN] JOIN_WEBSOCKET` — room code join prompt
   - Build verified: all 552+ source files compile and link successfully with emcc/em++
 
-- [ ] Handle the relay server URL configuration:
+- [x] Handle the relay server URL configuration:
   - Add a config option `configWebSocketRelay` to `src/pc/configfile.c` for the relay server URL (default: `ws://localhost:8765`)
   - For production, this would point to a publicly hosted relay server
   - Add an environment variable override: `SM64_WS_RELAY` that can be baked in at build time
   - In the DJUI settings panel, add a field to configure the relay URL
+
+  **Completion Notes (2026-02-09):**
+  - **Config option already existed** — `configWebSocketRelay` was added in the Phase 07 backend task (configfile.h:166, configfile.c:202, config table entry at configfile.c:363)
+  - **Added `SM64_WS_RELAY` build-time env var** in `Makefile.web`:
+    - `SM64_WS_RELAY ?=` optional Make variable, passed as `-DSM64_WS_RELAY_URL=\\\"<url>\\\"` via `WEB_EXTRA_CFLAGS`
+    - Usage: `gmake -f Makefile.web SM64_WS_RELAY=wss://relay.example.com`
+    - Build-time define takes priority over `configWebSocketRelay` in `ns_websocket_initialize()`
+  - **Added DJUI relay URL input field** in `src/pc/djui/djui_panel_host.c`:
+    - Editable inputbox on the Host panel (web builds only) showing current `configWebSocketRelay` value
+    - Real-time validation: must start with `ws://` or `wss://`, length > 6, fits in `MAX_CONFIG_STRING` (64)
+    - Invalid URLs highlighted in red; reverts to current config on focus loss if invalid
+    - Value saved to `configWebSocketRelay` on valid change (persisted via `configfile_save`)
+  - **Added localization string** `RELAY_URL = "Relay URL"` under `[HOST]` in `lang/English.ini`
+  - **Fixed code review issues**:
+    - Added JSON injection prevention in `ns_websocket_send_join_command()` — room codes validated to alphanumeric only
+    - Added NULL and bounds checks in `ns_websocket_dup_addr()`
+    - Added URL length truncation check in relay URL validation
+  - Build verified: compiles and links successfully with and without `SM64_WS_RELAY` override
 
 - [ ] Test multiplayer connectivity:
   - Start the relay server: `cd tools/web_relay && npm install && node server.js`

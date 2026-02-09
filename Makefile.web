@@ -51,6 +51,17 @@ EM_PORT_FLAGS := -s USE_SDL=2 -s USE_ZLIB=1 -s FULL_ES2=1
 # needs COOP/COEP server headers and has limited browser support).
 EM_THREAD_FLAGS :=
 
+# Build-time WebSocket relay URL override
+# Set SM64_WS_RELAY to bake a production relay URL into the build.
+# Example: gmake -f Makefile.web SM64_WS_RELAY=wss://relay.example.com
+# If not set, the game uses the configWebSocketRelay value (default ws://localhost:8765).
+SM64_WS_RELAY ?=
+
+WS_RELAY_FLAG :=
+ifneq ($(SM64_WS_RELAY),)
+WS_RELAY_FLAG := -DSM64_WS_RELAY_URL=\\\"$(SM64_WS_RELAY)\\\"
+endif
+
 # Extra C flags for web builds
 # Include -Wno-format-security -Wno-trigraphs from the main Makefile since
 # command-line overrides prevent the main Makefile's += from appending them.
@@ -59,6 +70,7 @@ WEB_EXTRA_CFLAGS := \
 	-Wno-trigraphs \
 	-DTARGET_WEB=1 \
 	-DUSE_GLES=1 \
+	$(WS_RELAY_FLAG) \
 	$(EM_PORT_FLAGS) \
 	$(EM_THREAD_FLAGS)
 
