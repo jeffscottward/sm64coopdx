@@ -25,8 +25,11 @@ class CORPHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP handler that injects Cross-Origin security headers."""
 
     def end_headers(self):
-        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        # COOP/COEP headers disabled — single-threaded build doesn't need
+        # SharedArrayBuffer, and these headers block browser extensions
+        # (like Playwright/Playwriter) from controlling the page.
+        # self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        # self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 

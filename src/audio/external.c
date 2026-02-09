@@ -1775,8 +1775,12 @@ static void update_game_sound(void) {
  * Called from threads: thread4_sound, thread5_game_loop
  */
 static void seq_player_play_sequence(u8 player, u8 seqId, u16 arg2) {
+#ifdef __EMSCRIPTEN__
+    (void)player; (void)seqId; (void)arg2;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     if (player >= SEQUENCE_PLAYERS) { return; }
     u8 targetVolume;
     u8 i;
@@ -1825,8 +1829,12 @@ static void seq_player_play_sequence(u8 player, u8 seqId, u16 arg2) {
  * Called from threads: thread5_game_loop
  */
 void seq_player_fade_out(u8 player, u16 fadeDuration) {
+#ifdef __EMSCRIPTEN__
+    (void)player; (void)fadeDuration;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     if (player >= SEQUENCE_PLAYERS) { return; }
 #if defined(VERSION_EU) || defined(VERSION_SH)
 #ifdef VERSION_EU
@@ -2085,8 +2093,12 @@ void unused_8031FED0(u8 player, u32 bits, s8 arg2) {
  * Called from threads: thread5_game_loop
  */
 void seq_player_lower_volume(u8 player, u16 fadeDuration, u8 percentage) {
+#ifdef __EMSCRIPTEN__
+    (void)player; (void)fadeDuration; (void)percentage;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     if (player >= SEQUENCE_PLAYERS) { return; }
     if (player == SEQ_PLAYER_LEVEL) {
         sLowerBackgroundMusicVolume = TRUE;
@@ -2107,8 +2119,12 @@ void seq_player_lower_volume(u8 player, u16 fadeDuration, u8 percentage) {
  * Called from threads: thread5_game_loop
  */
 void seq_player_unlower_volume(u8 player, u16 fadeDuration) {
+#ifdef __EMSCRIPTEN__
+    (void)player; (void)fadeDuration;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     if (player >= SEQUENCE_PLAYERS) { return; }
     sLowerBackgroundMusicVolume = FALSE;
     if (player == SEQ_PLAYER_LEVEL) {
@@ -2187,8 +2203,12 @@ static u8 begin_background_music_fade(u16 fadeDuration) {
  * Called from threads: thread5_game_loop
  */
 void set_audio_muted(u8 muted) {
+#ifdef __EMSCRIPTEN__
+    (void)muted;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     u8 i;
 
     for (i = 0; i < SEQUENCE_PLAYERS; i++) {
@@ -2404,14 +2424,17 @@ void sound_banks_disable(UNUSED u8 player, u16 bankMask) {
  * Called from threads: thread5_game_loop
  */
 static void disable_all_sequence_players(void) {
+#ifdef __EMSCRIPTEN__
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     u8 i;
 
     for (i = 0; i < SEQUENCE_PLAYERS; i++) {
         sequence_player_disable(&gSequencePlayers[i]);
     }
-    
+
     MUTEX_UNLOCK(gAudioThread);
 }
 
@@ -2766,8 +2789,12 @@ void stop_secondary_music(u16 fadeTimer) {
  * Called from threads: thread3_main, thread5_game_loop
  */
 void set_audio_fadeout(u16 fadeDuration) {
+#ifdef __EMSCRIPTEN__
+    (void)fadeDuration;
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
     if (sHasStartedFadeOut) {
         return;
     }
@@ -2894,8 +2921,12 @@ void play_toads_jingle(void) {
  * Called from threads: thread5_game_loop
  */
 void sound_reset(u8 presetId) {
+#ifdef __EMSCRIPTEN__
+    sound_init();
+    return;
+#endif
     MUTEX_LOCK(gAudioThread);
-    
+
 #ifndef VERSION_JP
     if (presetId >= 8) {
         presetId = 0;
@@ -2905,9 +2936,6 @@ void sound_reset(u8 presetId) {
     sGameLoopTicked = 0;
     disable_all_sequence_players();
     sound_init();
-#ifdef VERSION_SH
-    queue_audio_cmd_u32(AUDIO_CMD_ARGS(AUDIO_CMD_UNMUTE_ALL_SEQUENCE_PLAYERS, 0, 0, 0), 0);
-#endif
 #if defined(VERSION_JP) || defined(VERSION_US)
     audio_reset_session(&gAudioSessionPresets[presetId]);
 #else
@@ -2923,7 +2951,7 @@ void sound_reset(u8 presetId) {
     D_80332108 = (D_80332108 & 0xf0) + presetId;
     gSoundMode = D_80332108 >> 4;
     sHasStartedFadeOut = FALSE;
-    
+
     MUTEX_UNLOCK(gAudioThread);
 }
 

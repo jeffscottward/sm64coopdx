@@ -36,6 +36,68 @@
  *  -1 = user cancelled or error occurred
  */
 static volatile int sRomPickerResult = 0;
+static volatile int sRomFetchResult = 0;
+
+/* Callbacks for emscripten_async_wget_data */
+static void on_rom_fetch_success(void *arg, void *data, int size) {
+    (void)arg;
+    printf("[Web ROM] Fetched %d bytes from server\n", size);
+
+    const char *savePath = fs_get_write_path("");
+    if (!savePath) {
+        sRomFetchResult = -1;
+        return;
+    }
+
+    char destPath[SYS_MAX_PATH];
+    snprintf(destPath, sizeof(destPath), "%sbaserom.us.z64", savePath);
+
+    FILE *f = fopen(destPath, "wb");
+    if (f) {
+        fwrite(data, 1, size, f);
+        fclose(f);
+        printf("[Web ROM] Written to %s\n", destPath);
+        sRomFetchResult = 1;
+    } else {
+        printf("[Web ROM] Failed to write ROM file!\n");
+        sRomFetchResult = -1;
+    }
+}
+
+static void on_rom_fetch_error(void *arg) {
+    (void)arg;
+    printf("[Web ROM] Server fetch failed (ROM not served or network error)\n");
+    sRomFetchResult = -1;
+}
+
+/**
+ * Try to auto-fetch ROM from the web server at /baserom.us.z64.
+ *
+ * This avoids requiring user interaction — if the ROM is served alongside
+ * the game files, it loads automatically. Uses emscripten_async_wget_data.
+ * Falls back gracefully (returns 0) if the server doesn't have the ROM.
+ */
+int web_fetch_rom_from_server(void) {
+    sRomFetchResult = 0;
+
+    const char *savePath = fs_get_write_path("");
+    if (!savePath || savePath[0] == '\0') {
+        return 0;
+    }
+
+    printf("[Web ROM] Attempting auto-fetch from server...\n");
+
+    emscripten_async_wget_data("baserom.us.z64", NULL,
+                                on_rom_fetch_success, on_rom_fetch_error);
+
+    /* Poll until fetch completes or fails — emscripten_sleep yields to
+     * the browser event loop so the async wget callbacks can fire. */
+    while (sRomFetchResult == 0) {
+        emscripten_sleep(100);
+    }
+
+    return (sRomFetchResult == 1) ? 1 : 0;
+}
 
 /**
  * Check if a ROM file already exists in the virtual filesystem.

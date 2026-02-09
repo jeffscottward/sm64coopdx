@@ -497,14 +497,6 @@ void* main_game_init(UNUSED void* dummy) {
     mumble_init();
 
     gGameInited = true;
-#ifdef __EMSCRIPTEN__
-    printf("[Web Memory] Game init complete\n");
-    EM_ASM({
-        var heapSize = HEAP8.length;
-        var mb = (heapSize / (1024 * 1024)).toFixed(1);
-        console.log('[Web Memory] Post-init WASM heap: ' + mb + ' MB');
-    });
-#endif
     return NULL;
 }
 
@@ -516,28 +508,12 @@ void* main_game_init(UNUSED void* dummy) {
 static f64 sWebAccumulator = 0.0;
 static f64 sWebLastTime = 0.0;
 static bool sWebTimingInitialized = false;
-
-static void web_log_memory_stats(void) {
-    // Log WASM heap usage via Emscripten's HEAP size tracking.
-    // HEAP8.length gives the current WASM linear memory size in bytes.
-    EM_ASM({
-        var heapSize = HEAP8.length;
-        var mb = (heapSize / (1024 * 1024)).toFixed(1);
-        console.log('[Web Memory] WASM heap size: ' + mb + ' MB (' + heapSize + ' bytes)');
-    });
-}
+static bool sWebFirstTickCompleted = false;
 
 static void web_main_loop_iteration(void) {
-    // One-time timing diagnostics on first frame
     if (!sWebTimingInitialized) {
         sWebLastTime = clock_elapsed_f64();
         sWebTimingInitialized = true;
-        printf("[Web Timing] Game loop started: FRAMERATE=%d, sFrameTime=%.4f s\n", FRAMERATE, sFrameTime);
-        printf("[Web Timing] Display refresh rate: %u Hz, target refresh rate: %u Hz\n",
-               get_display_refresh_rate(), get_target_refresh_rate());
-        printf("[Web Timing] Using requestAnimationFrame (fps=0), delays disabled\n");
-        printf("[Web Timing] Game logic gated to %d Hz, rendering at display rate\n", FRAMERATE);
-        web_log_memory_stats();
     }
 
     f64 now = clock_elapsed_f64();
@@ -560,7 +536,6 @@ static void web_main_loop_iteration(void) {
         sWebAccumulator -= sFrameTime;
         ranGameTick = true;
 
-        // Game logic: network, interpolation prep, game loop, lua, audio
         CTX_EXTENT(CTX_NETWORK, network_update);
         CTX_EXTENT(CTX_INTERP, patch_interpolations_before);
         CTX_EXTENT(CTX_GAME_LOOP, game_loop_one_iteration);
@@ -568,14 +543,17 @@ static void web_main_loop_iteration(void) {
         if (gAudioThread.state == INVALID) {
             CTX_EXTENT(CTX_AUDIO, buffer_audio);
         }
+        sWebFirstTickCompleted = true;
     }
 
     // Poll for async mod download completion
     web_mod_check_async_complete();
 
     // Always render one interpolation frame per rAF for smooth display.
-    // Delta is how far we are between the last game tick and the next one.
-    if (ranGameTick || gGameInited) {
+    // On web, early frames can arrive before game_loop_one_iteration() has
+    // run even once. The display list data is uninitialized until the first
+    // tick completes, so skip rendering until then.
+    if ((ranGameTick || gGameInited) && sWebFirstTickCompleted) {
         f32 delta = (f32)(sWebAccumulator / sFrameTime);
         delta = clamp(delta, 0.f, 1.f);
         gRenderingInterpolated = true;
@@ -616,16 +594,6 @@ static void web_main_loop_iteration(void) {
 #endif
 
 int main(int argc, char *argv[]) {
-#ifdef __EMSCRIPTEN__
-    printf("[Web Memory] main() entry — initial WASM heap: ");
-    EM_ASM({
-        var heapSize = HEAP8.length;
-        var mb = (heapSize / (1024 * 1024)).toFixed(1);
-        console.log('[Web Memory] Initial WASM heap: ' + mb + ' MB (' + heapSize + ' bytes)');
-        console.log('[Web Memory] sizeof(void*)=' + $0 + ' (32-bit WASM)');
-    }, (int)sizeof(void*));
-#endif
-
     // handle terminal arguments
     if (!parse_cli_opts(argc, argv)) { return 0; }
 
@@ -680,35 +648,36 @@ int main(int argc, char *argv[]) {
 
     // render the rom setup screen
 #ifdef TARGET_WEB
-    // Web builds: if no ROM exists in IDBFS persistent storage, use the
-    // browser file picker to let the user provide one. Loop until a valid
-    // ROM is loaded or the user gives up. The file picker writes the ROM
-    // into the Emscripten VFS at the save directory, then main_rom_handler()
-    // validates it via MD5 like it does on native.
+    // Web builds: first try auto-fetching ROM from server, then IDBFS,
+    // then file picker as last resort.
     if (!main_rom_handler()) {
+        printf("[Web] ROM not in VFS, trying auto-fetch from server...\n");
+        if (web_fetch_rom_from_server()) {
+            printf("[Web] Auto-fetch done, validating ROM...\n");
+            main_rom_handler();
+        }
+    }
+    if (!gRomIsValid) {
+        printf("[Web] Auto-fetch didn't work, showing file picker...\n");
         while (1) {
             if (!web_check_rom_exists()) {
                 int loaded = web_load_rom_from_picker();
                 if (!loaded) {
-                    // User cancelled — inform and retry
                     EM_ASM({
-                        alert('A valid Super Mario 64 US ROM (.z64) is required to play.\nPlease select your ROM file.');
+                        alert('A Super Mario 64 US ROM (.z64) is required to play.\nPlease select your ROM file.');
                     });
                     continue;
                 }
             }
-            // ROM file is in the VFS — validate it
             if (main_rom_handler()) {
-                break; // Valid ROM found
+                break;
             }
-            // ROM was invalid — let the user try again
             EM_ASM({
-                alert('The selected file is not a valid vanilla SM64 US ROM.\nPlease select the correct ROM file.');
+                alert('The selected file is not a valid SM64 US ROM (.z64, 8 MB).\nPlease select the correct ROM file.');
             });
         }
-        // Persist the newly loaded ROM to IndexedDB for future sessions
-        web_storage_save();
     }
+    web_storage_save();
 #else
     if (!main_rom_handler()) {
 #ifdef LOADING_SCREEN_SUPPORTED
@@ -728,7 +697,7 @@ int main(int argc, char *argv[]) {
     bool threadSuccess = false;
     if (!gCLIOpts.hideLoadingScreen && !gCLIOpts.headless) {
         if (init_thread_handle(&gLoadingThread, main_game_init, NULL, NULL, 0) == 0) {
-            render_loading_screen(); // render the loading screen while the game is setup
+            render_loading_screen();
             threadSuccess = true;
             destroy_mutex(&gLoadingThread);
         }
@@ -736,7 +705,7 @@ int main(int argc, char *argv[]) {
     if (!threadSuccess)
 #endif
     {
-        main_game_init(NULL); // failsafe incase threading doesn't work
+        main_game_init(NULL);
     }
 
     // initialize sm64 data and controllers

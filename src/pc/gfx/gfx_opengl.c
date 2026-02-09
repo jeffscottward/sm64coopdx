@@ -13,6 +13,7 @@
 # include <SDL2/SDL.h>
 # include <GLES2/gl2.h>
 # include <GLES2/gl2ext.h>
+# include <emscripten.h>
 #else /* !__EMSCRIPTEN__ */
 
 # ifdef __MINGW32__
@@ -692,11 +693,24 @@ static void gfx_opengl_set_zmode_decal(bool zmode_decal) {
 }
 
 static void gfx_opengl_set_viewport(int x, int y, int width, int height) {
+#ifdef __EMSCRIPTEN__
+    /* gfx_current_dimensions uses CSS pixels (matching SDL input coordinates),
+       but the canvas drawing buffer is CSS * devicePixelRatio. Scale GL calls
+       to fill the actual backing store. */
+    float dpr = EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
+    glViewport((int)(x * dpr), (int)(y * dpr), (int)(width * dpr), (int)(height * dpr));
+#else
     glViewport(x, y, width, height);
+#endif
 }
 
 static void gfx_opengl_set_scissor(int x, int y, int width, int height) {
+#ifdef __EMSCRIPTEN__
+    float dpr = EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
+    glScissor((int)(x * dpr), (int)(y * dpr), (int)(width * dpr), (int)(height * dpr));
+#else
     glScissor(x, y, width, height);
+#endif
 }
 
 static void gfx_opengl_set_use_alpha(bool use_alpha) {

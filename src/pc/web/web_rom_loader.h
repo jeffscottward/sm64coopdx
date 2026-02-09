@@ -36,6 +36,13 @@
 int web_check_rom_exists(void);
 
 /**
+ * Try to auto-fetch ROM from the web server (e.g. /baserom.us.z64).
+ * Returns 1 if ROM was fetched and written to VFS, 0 on failure.
+ * This avoids requiring user interaction when ROM is served alongside game.
+ */
+int web_fetch_rom_from_server(void);
+
+/**
  * Show a browser file picker and load the selected ROM into the VFS.
  *
  * Creates an HTML <input type="file"> element, waits for the user to select
@@ -53,6 +60,7 @@ int web_load_rom_from_picker(void);
 
 /* Native builds: stubs that compile to nothing useful. */
 static inline int web_check_rom_exists(void) { return 0; }
+static inline int web_fetch_rom_from_server(void) { return 0; }
 static inline int web_load_rom_from_picker(void) { return 0; }
 
 #endif /* __EMSCRIPTEN__ */
