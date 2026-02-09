@@ -99,7 +99,7 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   > - Native path: original `std::filesystem` implementation preserved unchanged.
   > - Verified: Both web (with `TARGET_WEB=1`) and native (without) code paths compile cleanly with `g++ -std=c++17`.
 
-- [ ] Update `src/pc/pc_main.c` for Emscripten main loop compatibility:
+- [x] Update `src/pc/pc_main.c` for Emscripten main loop compatibility:
   - Add `#ifdef __EMSCRIPTEN__` / `#include <emscripten.h>` at the top
   - The main game loop at line 606 (`while (true) { ... }`) must be replaced with `emscripten_set_main_loop()` for web builds, since infinite loops block the browser
   - Create a static callback function `static void web_main_loop_iteration(void)` that contains the body of the while loop
@@ -107,6 +107,18 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   - The `0` argument means "use requestAnimationFrame timing" and `1` means "simulate infinite loop"
   - Also wrap the `#include <unistd.h>` in `#ifndef __EMSCRIPTEN__` if it causes issues (usually fine with Emscripten)
   - Ensure `game_exit()` calls `emscripten_cancel_main_loop()` before `exit()` under `__EMSCRIPTEN__`
+
+  > **Completed 2026-02-09:** Modified `src/pc/pc_main.c` with three changes for Emscripten main loop compatibility:
+  >
+  > **1. Added Emscripten include** (line 8-10): `#ifdef __EMSCRIPTEN__` / `#include <emscripten.h>` / `#endif` at the top of the file, after the standard library includes. The `<unistd.h>` include was left as-is since Emscripten provides a compatible `<unistd.h>` header.
+  >
+  > **2. Created `web_main_loop_iteration()` callback** (before `main()`): A `static void` function wrapped in `#ifdef __EMSCRIPTEN__` containing the exact body of the original `while (true)` loop — `debug_context_reset()`, `CTX_BEGIN/END`, `WAPI.main_loop(produce_one_frame)`, `discord_update()` (under `DISCORD_SDK`), `mumble_update()`, debug flushes (under `DEBUG`), `djui_ctx_display_update()` (under `DEVELOPMENT`), and `djui_lua_profiler_update()`. This function is called once per browser frame by Emscripten's requestAnimationFrame scheduler.
+  >
+  > **3. Replaced main loop** (in `main()`): The `while (true)` loop is now wrapped in `#ifdef __EMSCRIPTEN__` / `#else`. For web builds, `emscripten_set_main_loop(web_main_loop_iteration, 0, 1)` is called instead — the `0` fps argument lets the browser use requestAnimationFrame timing, and `1` simulates an infinite loop (Emscripten unwinds the call stack so the browser event loop can run).
+  >
+  > **4. Updated `game_exit()`**: Added `emscripten_cancel_main_loop()` call before `exit(0)` under `#ifdef __EMSCRIPTEN__`, ensuring the main loop is properly cancelled before cleanup.
+  >
+  > Verified: Both Emscripten and native code paths compile cleanly (tested with gcc syntax checks). The native path is completely unchanged — all Emscripten code is gated behind `__EMSCRIPTEN__` preprocessor guards.
 
 - [ ] Handle platform-specific code in `src/pc/platform.c` (or wherever `sys_user_path` etc. are implemented). Read the file and:
   - For `TARGET_WEB`, `sys_user_path()` should return `"/save"` or `"/user"` — a path in Emscripten's virtual filesystem that will be persisted via IndexedDB (IDBFS)

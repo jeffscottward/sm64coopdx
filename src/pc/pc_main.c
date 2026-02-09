@@ -5,6 +5,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "sm64.h"
 
 #include "pc/lua/smlua.h"
@@ -436,6 +440,9 @@ void game_deinit(void) {
 void game_exit(void) {
     LOG_INFO("exiting cleanly");
     game_deinit();
+#ifdef __EMSCRIPTEN__
+    emscripten_cancel_main_loop();
+#endif
     exit(0);
 }
 
@@ -471,6 +478,28 @@ void* main_game_init(UNUSED void* dummy) {
     gGameInited = true;
     return NULL;
 }
+
+#ifdef __EMSCRIPTEN__
+static void web_main_loop_iteration(void) {
+    debug_context_reset();
+    CTX_BEGIN(CTX_TOTAL);
+    WAPI.main_loop(produce_one_frame);
+#ifdef DISCORD_SDK
+    discord_update();
+#endif
+    mumble_update();
+#ifdef DEBUG
+    fflush(stdout);
+    fflush(stderr);
+#endif
+    CTX_END(CTX_TOTAL);
+
+#ifdef DEVELOPMENT
+    djui_ctx_display_update();
+#endif
+    djui_lua_profiler_update();
+}
+#endif
 
 int main(int argc, char *argv[]) {
     // handle terminal arguments
@@ -603,6 +632,9 @@ int main(int argc, char *argv[]) {
     }
 
     // main loop
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(web_main_loop_iteration, 0, 1);
+#else
     while (true) {
         debug_context_reset();
         CTX_BEGIN(CTX_TOTAL);
@@ -622,6 +654,7 @@ int main(int argc, char *argv[]) {
 #endif
         djui_lua_profiler_update();
     }
+#endif
 
     return 0;
 }
