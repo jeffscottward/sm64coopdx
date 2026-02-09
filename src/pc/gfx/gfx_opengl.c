@@ -8,32 +8,41 @@
 #endif
 #include <PR/gbi.h>
 
-#ifdef __MINGW32__
-# define FOR_WINDOWS 1
-#else
+#ifdef __EMSCRIPTEN__
 # define FOR_WINDOWS 0
-#endif
-
-#if FOR_WINDOWS || defined(OSX_BUILD)
-# define GLEW_STATIC
-# include <GL/glew.h>
-#endif
-
-#define GL_GLEXT_PROTOTYPES 1
-
-#ifdef WAPI_SDL2
 # include <SDL2/SDL.h>
-# ifdef USE_GLES
-#  include <SDL2/SDL_opengles2.h>
+# include <GLES2/gl2.h>
+# include <GLES2/gl2ext.h>
+#else /* !__EMSCRIPTEN__ */
+
+# ifdef __MINGW32__
+#  define FOR_WINDOWS 1
 # else
-#  include <SDL2/SDL_opengl.h>
+#  define FOR_WINDOWS 0
 # endif
-#elif defined(WAPI_SDL1)
-# include <SDL/SDL.h>
-# ifndef GLEW_STATIC
-#  include <SDL/SDL_opengl.h>
+
+# if FOR_WINDOWS || defined(OSX_BUILD)
+#  define GLEW_STATIC
+#  include <GL/glew.h>
 # endif
-#endif
+
+# define GL_GLEXT_PROTOTYPES 1
+
+# ifdef WAPI_SDL2
+#  include <SDL2/SDL.h>
+#  ifdef USE_GLES
+#   include <SDL2/SDL_opengles2.h>
+#  else
+#   include <SDL2/SDL_opengl.h>
+#  endif
+# elif defined(WAPI_SDL1)
+#  include <SDL/SDL.h>
+#  ifndef GLEW_STATIC
+#   include <SDL/SDL_opengl.h>
+#  endif
+# endif
+
+#endif /* __EMSCRIPTEN__ */
 
 #include "../platform.h"
 #include "../configfile.h"
@@ -697,7 +706,11 @@ static void gfx_opengl_init(void) {
     tex_cache = calloc(tex_cache_size, sizeof(struct GLTexture));
     if (!tex_cache) sys_fatal("out of memory allocating texture cache");
 
-    // check GL version
+    glGenBuffers(1, &opengl_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
+
+#ifndef __EMSCRIPTEN__
+    // Check GL version and optionally create VAO (not needed on WebGL)
     int vmajor = 0;
     int vminor = 0;
     bool is_es = false;
@@ -705,14 +718,11 @@ static void gfx_opengl_init(void) {
     if (vmajor < 2 && vminor < 1 && !is_es)
         sys_fatal("OpenGL 2.1+ is required.\nReported version: %s%d.%d", is_es ? "ES" : "", vmajor, vminor);
 
-    glGenBuffers(1, &opengl_vbo);
-
-    glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
-
     if (vmajor >= 3 && !is_es) {
         glGenVertexArrays(1, &opengl_vao);
         glBindVertexArray(opengl_vao);
     }
+#endif
 
     glDepthFunc(GL_LEQUAL);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
