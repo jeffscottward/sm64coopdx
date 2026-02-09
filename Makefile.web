@@ -3,16 +3,19 @@
 #==============================================================================#
 #
 # Usage:
-#   make -f Makefile.web              # Build web version
-#   make -f Makefile.web clean-web    # Clean web build artifacts
-#   make -f Makefile.web -j$(nproc)   # Parallel build
+#   gmake -f Makefile.web              # Build web version
+#   gmake -f Makefile.web clean-web    # Clean web build artifacts
+#   gmake -f Makefile.web -j$(nproc)   # Parallel build
 #
 # Prerequisites:
-#   1. Emscripten SDK (emsdk) installed and activated:
+#   1. GNU Make 4.x+ ('gmake' on macOS — install via 'brew install make')
+#      The main Makefile uses the != operator which requires GNU Make 4.0+.
+#      macOS ships GNU Make 3.81 which does not support this.
+#   2. Emscripten SDK (emsdk) installed and activated:
 #        source /path/to/emsdk/emsdk_env.sh
 #      Verify: 'emcc --version' should work
-#   2. baserom.us.z64 in the project root
-#   3. Python 3 available as 'python3'
+#   3. baserom.us.z64 in the project root
+#   4. Python 3 available as 'python3'
 #
 # This wrapper invokes the main Makefile with Emscripten-specific overrides.
 # It sets the compiler toolchain to emcc/em++, disables native-only features
@@ -23,6 +26,10 @@
 
 # Build output directory for web
 BUILD_DIR_WEB := build/us_web
+
+# Require GNU Make 4.x+ for != operator support
+# On macOS, use 'gmake' (brew install make). On Linux, 'make' is usually 4.x+.
+GMAKE := $(shell which gmake 2>/dev/null || which make)
 
 # Emscripten compiler toolchain
 EMCC  := emcc
@@ -71,7 +78,7 @@ MAKE_OVERRIDES := \
 	CXX="$(EMXX)" \
 	LD="$(EMXX)" \
 	AR="$(EMAR)" \
-	CPP="$(EMCC) -E -P" \
+	CPP="$(EMCC) -E -P -x c" \
 	CROSS="" \
 	DISCORD_SDK=0 \
 	COOPNET=0 \
@@ -104,15 +111,21 @@ web:
 	@echo " Building sm64coopdx for WebAssembly"
 	@echo "=========================================="
 	@echo ""
+	@# Verify GNU Make 4.x+ is available (needed for != operator)
+	@$(GMAKE) --version | head -1 | grep -qE 'GNU Make [4-9]\.' || \
+		(echo "ERROR: GNU Make 4.x+ required (found: $$($(GMAKE) --version | head -1))." && \
+		 echo "On macOS: brew install make  (then use 'gmake')" && \
+		 exit 1)
 	@# Verify emcc is available
 	@which emcc > /dev/null 2>&1 || \
 		(echo "ERROR: emcc not found in PATH." && \
 		 echo "Please install and activate the Emscripten SDK:" && \
 		 echo "  source /path/to/emsdk/emsdk_env.sh" && \
 		 exit 1)
+	@echo "Using GNU Make: $$($(GMAKE) --version | head -1)"
 	@echo "Using Emscripten: $$(emcc --version | head -1)"
 	@echo ""
-	$(MAKE) -f Makefile $(MAKE_OVERRIDES)
+	$(GMAKE) --no-builtin-rules -f Makefile $(MAKE_OVERRIDES)
 	@echo ""
 	@echo "=========================================="
 	@echo " Build complete!"

@@ -1,0 +1,107 @@
+============================================================
+SM64CoopDX Web Build - Error Log #1
+Date: 2026-02-09
+Build command: gmake -f Makefile.web -j8 -k
+Emscripten: 5.0.0
+GNU Make: 4.4.1
+============================================================
+
+ERRORS BY CATEGORY
+==================
+
+1. MISSING HEADERS / UNDECLARED IDENTIFIERS
+--------------------------------------------
+- src/engine/math_util.c:830 — FLT_EPSILON undeclared
+  Missing #include <float.h>
+  FIX: Added #include <float.h> to math_util.c
+
+2. MACRO PREPROCESSOR ISSUES (EM_ASM commas)
+---------------------------------------------
+- src/pc/audio/audio_web.h:44,59 — EM_ASM({...}) fails because
+  commas in JavaScript code (array literals, for-loop arguments)
+  are interpreted as macro argument separators by the C preprocessor.
+  EM_ASM only tracks parentheses, not braces, for argument matching.
+  FIX: Replaced EM_ASM({...}) with emscripten_run_script() and
+  emscripten_run_script_int() using string concatenation.
+
+3. STRUCT MEMBER / PTHREAD ERRORS (ThreadHandle.mutex)
+-------------------------------------------------------
+- src/pc/mods/mod_cache.c:256 — pthread_mutex_lock undeclared, no 'mutex' member
+- src/pc/mods/mods.c:214,244,256,263,267 — same
+- data/dynos_gfx_init.cpp:37,61,80 — same
+  Root cause: LOADING_SCREEN_MUTEX macro in src/pc/loading.h directly
+  calls pthread_mutex_lock/unlock and accesses .mutex member, but the
+  TARGET_WEB ThreadHandle struct (in thread.h) has no mutex field.
+  FIX: Added #ifdef TARGET_WEB branch in loading.h macro that executes
+  the protected code without mutex (single-threaded on web).
+
+4. MISSING GENERATED FILES (level entry symbols + textures)
+------------------------------------------------------------
+- levels/level_defines.h:23+ — level_bbh_entry, level_ccm_entry, etc. undeclared
+  Root cause: build/us_web/include/level_headers.h was empty because
+  emcc's preprocessor (-E -P) doesn't recognize .h.in extension.
+  FIX: Added -x c flag to CPP definition in Makefile.web so emcc
+  treats .h.in files as C source for preprocessing.
+
+- levels/castle_courtyard/texture.inc.c:2 — 0_custom.rgba16.inc.c not found
+- levels/castle_grounds/texture.inc.c:12 — 6_custom.rgba16.inc.c not found
+  Root cause: Texture .inc.c generation depends on .d dependency files
+  from prior builds. On first clean build, make doesn't know these
+  dependencies exist. This is a pre-existing issue not specific to web.
+  Expected to resolve on subsequent builds once .d files are populated.
+
+5. BUILD SYSTEM ISSUES (fixed before first compilation)
+--------------------------------------------------------
+- tangle Makefile.web — GNU Make's built-in suffix rule for .web->.p
+  tried to process Makefile.web as a CWEB literate programming file.
+  FIX: Added --no-builtin-rules to inner make invocation.
+
+- build/us_web/src/engine/behavior_script.d: No such file or directory
+  GNU Make 3.81 (macOS default) doesn't support the != operator for
+  shell execution during Makefile parsing. The DUMMY != mkdir -p
+  line silently failed.
+  FIX: Switched to gmake (GNU Make 4.4.1 via brew install make).
+
+FAILED TARGETS
+==============
+- build/us_web/src/engine/math_util.o
+- build/us_web/src/pc/pc_main.o (via audio_web.h)
+- build/us_web/src/pc/mods/mods.o
+- build/us_web/src/pc/mods/mod_cache.o
+- build/us_web/data/dynos_gfx_init.o
+- build/us_web/levels/scripts.o (level_headers.h empty)
+- build/us_web/levels/castle_courtyard/leveldata.o (missing texture .inc.c)
+- build/us_web/levels/castle_grounds/leveldata.o (missing texture .inc.c)
+
+CHANGES MADE
+=============
+1. Makefile.web:
+   - Added gmake requirement and GMAKE variable
+   - Changed CPP to "emcc -E -P -x c" for .h.in preprocessing
+   - Inner make uses $(GMAKE) --no-builtin-rules
+   - Added gmake version check to web target
+
+2. src/engine/math_util.c:
+   - Added #include <float.h> for FLT_EPSILON
+
+3. src/pc/loading.h:
+   - Added #ifdef TARGET_WEB branch for LOADING_SCREEN_MUTEX macro
+   - Web version executes code without mutex (single-threaded)
+
+4. src/pc/audio/audio_web.h:
+   - Replaced EM_ASM({...}) with emscripten_run_script() string API
+   - Avoids preprocessor comma confusion in JavaScript code
+
+POST-FIX BUILD RESULTS (Build #2)
+===================================
+After applying all fixes above:
+- 552 source files compiled successfully (0 compilation errors)
+- All texture .inc.c files generated correctly
+- Level headers generated correctly with -x c flag
+- ONLY remaining issue: LINKER errors for Lua symbols
+  (lua_rawgeti, lua_pushinteger, lua_pcallk, etc.)
+  This is expected — the native liblua53.a doesn't work with WASM.
+  Lua must be compiled from source with emcc (Phase 05, Task 4).
+
+The build successfully reaches the final link stage, meaning ALL
+source code now compiles cleanly for Emscripten/WASM.

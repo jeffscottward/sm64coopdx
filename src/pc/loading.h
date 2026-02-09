@@ -17,12 +17,20 @@ struct LoadingSegment {
 
 extern struct LoadingSegment gCurrLoadingSegment;
 
+#ifdef TARGET_WEB
+// Web build: single-threaded, no mutex needed. Just execute the code directly.
+#define LOADING_SCREEN_MUTEX(...) \
+    if (!gCLIOpts.hideLoadingScreen && gLoadingThread.state == RUNNING) { \
+        __VA_ARGS__; \
+    }
+#else
 #define LOADING_SCREEN_MUTEX(...) \
     if (!gCLIOpts.hideLoadingScreen && gLoadingThread.state == RUNNING) { \
         pthread_mutex_lock(&gLoadingThread.mutex); \
         __VA_ARGS__; \
         pthread_mutex_unlock(&gLoadingThread.mutex); \
     }
+#endif
 
 extern struct ThreadHandle gLoadingThread;
 

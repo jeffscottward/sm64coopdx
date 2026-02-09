@@ -11,9 +11,9 @@
  * starts in a "suspended" state until the user interacts with the page.
  *
  * This header provides a one-shot mechanism that resumes the AudioContext
- * after the first user interaction. It uses EM_ASM to inject a JavaScript
- * event listener that calls audioCtx.resume() on the first click, keydown,
- * or touchstart event.
+ * after the first user interaction. It uses emscripten_run_script to inject
+ * a JavaScript event listener that calls audioCtx.resume() on the first
+ * click, keydown, or touchstart event.
  *
  * On native builds this header compiles to nothing.
  */
@@ -41,33 +41,28 @@ static inline void audio_web_setup_resume(void) {
     if (audio_web_resume_installed) return;
     audio_web_resume_installed = true;
 
-    EM_ASM({
-        // Emscripten SDL2 audio stores the AudioContext in SDL2.audioContext
-        // Try multiple known locations for the AudioContext
-        function tryResumeAudio() {
-            var ctx = null;
-            if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {
-                ctx = SDL2.audioContext;
-            } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {
-                ctx = Module.SDL2.audioContext;
-            }
-            if (ctx && ctx.state === 'suspended') {
-                ctx.resume();
-            }
-        }
-
-        var events = ['click', 'keydown', 'touchstart'];
-        function onInteraction() {
-            tryResumeAudio();
-            // Remove all listeners after first interaction
-            for (var i = 0; i < events.length; i++) {
-                document.removeEventListener(events[i], onInteraction, true);
-            }
-        }
-        for (var i = 0; i < events.length; i++) {
-            document.addEventListener(events[i], onInteraction, true);
-        }
-    });
+    emscripten_run_script(
+        "function _sm64_tryResumeAudio() {"
+        "  var ctx = null;"
+        "  if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {"
+        "    ctx = SDL2.audioContext;"
+        "  } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {"
+        "    ctx = Module.SDL2.audioContext;"
+        "  }"
+        "  if (ctx && ctx.state === 'suspended') {"
+        "    ctx.resume();"
+        "  }"
+        "}"
+        "function _sm64_onInteraction() {"
+        "  _sm64_tryResumeAudio();"
+        "  document.removeEventListener('click', _sm64_onInteraction, true);"
+        "  document.removeEventListener('keydown', _sm64_onInteraction, true);"
+        "  document.removeEventListener('touchstart', _sm64_onInteraction, true);"
+        "}"
+        "document.addEventListener('click', _sm64_onInteraction, true);"
+        "document.addEventListener('keydown', _sm64_onInteraction, true);"
+        "document.addEventListener('touchstart', _sm64_onInteraction, true);"
+    );
 }
 
 /**
@@ -76,15 +71,17 @@ static inline void audio_web_setup_resume(void) {
  * Useful for UI hints like "Click to enable audio".
  */
 static inline bool audio_web_is_running(void) {
-    return (bool)EM_ASM_INT({
-        var ctx = null;
-        if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {
-            ctx = SDL2.audioContext;
-        } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {
-            ctx = Module.SDL2.audioContext;
-        }
-        return (ctx && ctx.state === 'running') ? 1 : 0;
-    });
+    return (bool)emscripten_run_script_int(
+        "(function() {"
+        "  var ctx = null;"
+        "  if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {"
+        "    ctx = SDL2.audioContext;"
+        "  } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {"
+        "    ctx = Module.SDL2.audioContext;"
+        "  }"
+        "  return (ctx && ctx.state === 'running') ? 1 : 0;"
+        "})()"
+    );
 }
 
 #else /* !__EMSCRIPTEN__ */
