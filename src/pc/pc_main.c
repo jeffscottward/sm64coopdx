@@ -26,6 +26,7 @@
 #include "audio/audio_web.h"
 #include "pc/web/web_storage.h"
 #include "pc/web/web_rom_loader.h"
+#include "pc/web/web_mod_loader.h"
 
 #include "rom_assets.h"
 #include "rom_checker.h"
@@ -568,6 +569,9 @@ static void web_main_loop_iteration(void) {
             CTX_EXTENT(CTX_AUDIO, buffer_audio);
         }
     }
+
+    // Poll for async mod download completion
+    web_mod_check_async_complete();
 
     // Always render one interpolation frame per rAF for smooth display.
     // Delta is how far we are between the last game tick and the next one.

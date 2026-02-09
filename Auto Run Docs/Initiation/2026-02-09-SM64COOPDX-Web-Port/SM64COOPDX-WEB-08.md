@@ -40,7 +40,7 @@ This phase implements the ability to load Lua mods directly from URLs in the bro
   - 21 new tests pass in both native and web-simulated modes; all 22 existing mod loader tests still pass
   - Full Emscripten build verified clean (only web_mod_loader.o recompiled + relinked)
 
-- [ ] Add a mod URL input to the DJUI mod management UI:
+- [x] Add a mod URL input to the DJUI mod management UI:
   - Read `src/pc/djui/djui_panel_modlist.c` to understand the existing mod list UI
   - For web builds, add a "Load from URL" button to the mod list panel
   - When clicked, show a text input field where users can paste a mod URL
@@ -48,6 +48,22 @@ This phase implements the ability to load Lua mods directly from URLs in the bro
   - Show a download progress indicator
   - Show success/error feedback
   - Guard with `#ifdef TARGET_WEB`
+
+  **Completed:** Modified `src/pc/djui/djui_panel_host_mods.c` to add a "Load from URL" section for web builds. Key implementation details:
+  - Added `#include "pc/web/web_mod_loader.h"` (guarded by `#ifdef TARGET_WEB`)
+  - Added static state vars: `sModUrlInputbox`, `sModUrlDownloadButton`, `sModUrlProgressBar`, `sModUrlStatusText`, `sModUrlDownloading`, `sModUrlProgress`
+  - **URL Input Row**: 70% width inputbox + 28% "Download" button in a `djui_rect_container`
+  - **URL Validation**: Real-time color feedback (red for invalid, black for valid) via `djui_mod_url_text_change` — validates `http://` or `https://` prefix
+  - **Enter Key Support**: `djui_inputbox_hook_enter_press` triggers download on Enter
+  - **Download Flow**: `djui_mod_url_download_click` validates URL, disables UI, shows progress bar (infinite mode), starts `web_mod_download_async()` with auto filename extraction
+  - **Completion Callback**: `djui_mod_url_download_complete` re-enables UI, hides progress bar, shows success/error popup via `djui_popup_create`, and refreshes the mod list on success (`mods_refresh_local` + `mods_update_selectable`)
+  - **Status Text**: Color-coded feedback below progress bar (green=success, red=error)
+  - **Game Loop Polling**: Added `web_mod_check_async_complete()` call in `web_main_loop_iteration()` in `pc_main.c` so async downloads are polled every frame
+  - **Language Strings**: Added 8 new strings to `lang/English.ini` under `[HOST_MODS]`
+  - **Panel Cleanup**: Destroy callback resets all web-specific pointers
+  - All changes guarded with `#ifdef TARGET_WEB` — zero impact on native builds
+  - 39 tests pass in both native and web-simulated modes
+  - Full Emscripten build verified clean (recompiled djui_panel_host_mods.o + pc_main.o, relinked)
 
 - [ ] Create a curated mod browser (optional enhancement):
   - If `mods.sm64coopdx.com` provides an API or structured listing, create a browsable mod catalog

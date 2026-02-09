@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "djui.h"
 #include "djui_panel.h"
 #include "djui_panel_menu.h"
@@ -13,6 +14,9 @@
 #include "djui_panel_host_mods.h"
 #include "djui_panel_pause.h"
 #include "pc/thread.h"
+#ifdef TARGET_WEB
+#include "pc/web/web_mod_loader.h"
+#endif
 
 #define DJUI_MOD_PANEL_WIDTH (410.0f + (16 * 2.0f))
 #define MOD_CATEGORY_ALL 0
@@ -28,6 +32,15 @@ static struct DjuiButton* sRefreshButton = NULL;
 static unsigned int sSelectedCategory = MOD_CATEGORY_ALL;
 static bool sWarned = false;
 
+#ifdef TARGET_WEB
+static struct DjuiInputbox* sModUrlInputbox = NULL;
+static struct DjuiButton* sModUrlDownloadButton = NULL;
+static struct DjuiText* sModUrlStatusText = NULL;
+static struct DjuiProgressBar* sModUrlProgressBar = NULL;
+static float sModUrlProgress = 0.0f;
+static bool sModUrlDownloading = false;
+#endif
+
 struct ThreadHandle gModRefreshThread = { 0 };
 
 struct ModCategory sCategories[] = {
@@ -42,6 +55,7 @@ struct ModCategory sCategories[] = {
 static const int numCategories = sizeof(sCategories) / sizeof(sCategories[0]);
 
 void djui_panel_host_mods_create(struct DjuiBase* caller);
+void djui_panel_host_mods_add_mods(struct DjuiBase* layoutBase);
 
 static void djui_panel_host_mods_description_create(void) {
     f32 bodyHeight = 1000;
@@ -118,6 +132,121 @@ static void djui_mod_checkbox_on_value_change(UNUSED struct DjuiBase* base) {
     }
 }
 
+#ifdef TARGET_WEB
+static void djui_mod_url_download_complete(int status) {
+    sModUrlDownloading = false;
+    sModUrlProgress = 0.0f;
+
+    if (sModUrlDownloadButton) {
+        djui_text_set_text(sModUrlDownloadButton->text, DLANG(HOST_MODS, DOWNLOAD));
+        djui_base_set_enabled(&sModUrlDownloadButton->base, true);
+    }
+    if (sModUrlInputbox) {
+        djui_base_set_enabled(&sModUrlInputbox->base, true);
+    }
+    if (sModUrlProgressBar) {
+        djui_base_set_visible(&sModUrlProgressBar->base, false);
+    }
+
+    switch (status) {
+        case WEB_MOD_OK:
+            djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_SUCCESS), 2);
+            /* Refresh mod list to pick up the new mod */
+            if (sModLayout && sModPaginated) {
+                djui_base_destroy_children(&sModLayout->base);
+                mods_refresh_local();
+                mods_update_selectable();
+                djui_panel_host_mods_add_mods(&sModLayout->base);
+                djui_paginated_calculate_height(sModPaginated);
+            }
+            if (sModUrlStatusText) {
+                djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOAD_SUCCESS));
+                djui_base_set_color(&sModUrlStatusText->base, 100, 255, 100, 255);
+            }
+            break;
+        case WEB_MOD_ERR_BADURL:
+            djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_BAD_URL), 2);
+            if (sModUrlStatusText) {
+                djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOAD_BAD_URL));
+                djui_base_set_color(&sModUrlStatusText->base, 255, 100, 100, 255);
+            }
+            break;
+        case WEB_MOD_ERR_TOOLARGE:
+            djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_TOO_LARGE), 2);
+            if (sModUrlStatusText) {
+                djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOAD_TOO_LARGE));
+                djui_base_set_color(&sModUrlStatusText->base, 255, 100, 100, 255);
+            }
+            break;
+        default:
+            djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_FAILED), 2);
+            if (sModUrlStatusText) {
+                djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOAD_FAILED));
+                djui_base_set_color(&sModUrlStatusText->base, 255, 100, 100, 255);
+            }
+            break;
+    }
+}
+
+static void djui_mod_url_download_click(UNUSED struct DjuiBase* caller) {
+    if (sModUrlDownloading) return;
+    if (!sModUrlInputbox) return;
+
+    const char* url = sModUrlInputbox->buffer;
+    if (!url || url[0] == '\0') {
+        djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_BAD_URL), 2);
+        return;
+    }
+
+    /* Validate URL starts with http:// or https:// */
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+        djui_popup_create(DLANG(HOST_MODS, DOWNLOAD_BAD_URL), 2);
+        if (sModUrlStatusText) {
+            djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOAD_BAD_URL));
+            djui_base_set_color(&sModUrlStatusText->base, 255, 100, 100, 255);
+        }
+        return;
+    }
+
+    sModUrlDownloading = true;
+
+    /* Show downloading state */
+    if (sModUrlDownloadButton) {
+        djui_text_set_text(sModUrlDownloadButton->text, DLANG(HOST_MODS, DOWNLOADING));
+        djui_base_set_enabled(&sModUrlDownloadButton->base, false);
+    }
+    if (sModUrlInputbox) {
+        djui_base_set_enabled(&sModUrlInputbox->base, false);
+    }
+    if (sModUrlProgressBar) {
+        sModUrlProgress = 0.5f; /* indeterminate-ish: show half-filled bar */
+        djui_base_set_visible(&sModUrlProgressBar->base, true);
+    }
+    if (sModUrlStatusText) {
+        djui_text_set_text(sModUrlStatusText, DLANG(HOST_MODS, DOWNLOADING));
+        djui_base_set_color(&sModUrlStatusText->base, 220, 220, 220, 255);
+    }
+
+    /* Start async download — NULL dest_filename = auto-extract from URL */
+    web_mod_download_async(url, NULL, djui_mod_url_download_complete);
+}
+
+static void djui_mod_url_text_change(struct DjuiBase* caller) {
+    struct DjuiInputbox* inputbox = (struct DjuiInputbox*)caller;
+    bool valid = (strncmp(inputbox->buffer, "http://", 7) == 0 ||
+                  strncmp(inputbox->buffer, "https://", 8) == 0);
+    if (valid) {
+        djui_inputbox_set_text_color(inputbox, 0, 0, 0, 255);
+    } else {
+        djui_inputbox_set_text_color(inputbox, 255, 0, 0, 255);
+    }
+}
+
+static void djui_mod_url_on_enter(struct DjuiInputbox* inputbox) {
+    djui_mod_url_download_click(&inputbox->base);
+}
+#endif /* TARGET_WEB */
+
 static void djui_panel_host_mods_destroy(struct DjuiBase* base) {
     struct DjuiThreePanel* threePanel = (struct DjuiThreePanel*)base;
     free(threePanel);
@@ -128,6 +257,13 @@ static void djui_panel_host_mods_destroy(struct DjuiBase* base) {
     }
     sModLayout = NULL;
     sTooltip = NULL;
+#ifdef TARGET_WEB
+    sModUrlInputbox = NULL;
+    sModUrlDownloadButton = NULL;
+    sModUrlStatusText = NULL;
+    sModUrlProgressBar = NULL;
+    sModUrlDownloading = false;
+#endif
 }
 
 void djui_panel_host_mods_add_mods(struct DjuiBase* layoutBase) {
@@ -232,6 +368,44 @@ void djui_panel_host_mods_create(struct DjuiBase* caller) {
         djui_paginated_calculate_height(paginated);
         sModPaginated = paginated;
 
+#ifdef TARGET_WEB
+        /* Web mod URL download section */
+        if (gNetworkType == NT_NONE) {
+            struct DjuiText* urlLabel = djui_text_create(body, DLANG(HOST_MODS, LOAD_FROM_URL));
+            djui_base_set_size_type(&urlLabel->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+            djui_base_set_size(&urlLabel->base, 1.0f, 32);
+            djui_base_set_color(&urlLabel->base, 200, 200, 255, 255);
+            djui_text_set_alignment(urlLabel, DJUI_HALIGN_LEFT, DJUI_VALIGN_TOP);
+            djui_text_set_drop_shadow(urlLabel, 64, 64, 64, 100);
+
+            struct DjuiRect* rectUrl = djui_rect_container_create(body, 32);
+            {
+                sModUrlInputbox = djui_inputbox_create(&rectUrl->base, 512);
+                djui_base_set_size_type(&sModUrlInputbox->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+                djui_base_set_size(&sModUrlInputbox->base, 0.7f, 32);
+                djui_base_set_alignment(&sModUrlInputbox->base, DJUI_HALIGN_LEFT, DJUI_VALIGN_TOP);
+                djui_inputbox_set_text(sModUrlInputbox, "");
+                djui_interactable_hook_value_change(&sModUrlInputbox->base, djui_mod_url_text_change);
+                djui_inputbox_hook_enter_press(sModUrlInputbox, djui_mod_url_on_enter);
+
+                sModUrlDownloadButton = djui_button_create(&rectUrl->base, DLANG(HOST_MODS, DOWNLOAD), DJUI_BUTTON_STYLE_NORMAL, djui_mod_url_download_click);
+                djui_base_set_size(&sModUrlDownloadButton->base, 0.28f, 32);
+                djui_base_set_alignment(&sModUrlDownloadButton->base, DJUI_HALIGN_RIGHT, DJUI_VALIGN_TOP);
+            }
+
+            sModUrlProgressBar = djui_progress_bar_create(body, &sModUrlProgress, 0.0f, 1.0f, true);
+            djui_base_set_size_type(&sModUrlProgressBar->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+            djui_base_set_size(&sModUrlProgressBar->base, 1.0f, 8);
+            djui_base_set_visible(&sModUrlProgressBar->base, false);
+
+            sModUrlStatusText = djui_text_create(body, "");
+            djui_base_set_size_type(&sModUrlStatusText->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+            djui_base_set_size(&sModUrlStatusText->base, 1.0f, 20);
+            djui_base_set_color(&sModUrlStatusText->base, 220, 220, 220, 255);
+            djui_text_set_drop_shadow(sModUrlStatusText, 64, 64, 64, 100);
+        }
+#endif /* TARGET_WEB */
+
         if (gNetworkType == NT_NONE) {
             struct DjuiRect* rect1 = djui_rect_container_create(body, 64);
             {
@@ -242,7 +416,12 @@ void djui_panel_host_mods_create(struct DjuiBase* caller) {
             djui_button_create(body, DLANG(MENU, BACK), DJUI_BUTTON_STYLE_BACK, djui_panel_menu_back);
         }
 
+#ifdef TARGET_WEB
+        /* Extra space for URL input section: label(32) + inputRow(32) + progressBar(8) + statusText(20) + margins */
+        panel->bodySize.value = paginated->base.height.value + 64 + 64 + (gNetworkType == NT_NONE ? 120 : 0);
+#else
         panel->bodySize.value = paginated->base.height.value + 64 + 64;
+#endif
     }
 
     panel->base.destroy = djui_panel_host_mods_destroy;
