@@ -6,6 +6,7 @@
 #   gmake -f Makefile.web              # Build web version
 #   gmake -f Makefile.web clean-web    # Clean web build artifacts
 #   gmake -f Makefile.web -j$(nproc)   # Parallel build
+#   gmake -f Makefile.web WEB_DEBUG=1  # Build with ASSERTIONS=2 + SAFE_HEAP
 #
 # Serving locally:
 #   python3 serve_web.py               # Serve with COOP/COEP headers (port 8080)
@@ -81,12 +82,29 @@ LUA_OBJ_FILES := $(LUA_SRC_FILES:$(LUA_SRC_DIR)/%.c=$(LUA_WEB_DIR)/%.o)
 # -march=native, -l:liblua53.a). This is intentional — Emscripten ports provide
 # zlib (-s USE_ZLIB=1), SDL2 (-s USE_SDL=2), and OpenGL ES (-s FULL_ES2=1).
 # Native-only libraries (curl, pthread, dl, atomic) are not needed for web builds.
+# Debug mode: set WEB_DEBUG=1 to enable Emscripten assertions and better errors.
+# This adds ASSERTIONS=2, SAFE_HEAP, and STACK_OVERFLOW_CHECK for debugging
+# "memory access out of bounds" and "unreachable executed" crashes.
+# Usage: gmake -f Makefile.web WEB_DEBUG=1
+WEB_DEBUG ?= 0
+
+WEB_DEBUG_FLAGS :=
+ifeq ($(WEB_DEBUG),1)
+WEB_DEBUG_FLAGS := \
+	-s ASSERTIONS=2 \
+	-s SAFE_HEAP=1 \
+	-s STACK_OVERFLOW_CHECK=2 \
+	-s DEMANGLE_SUPPORT=1
+endif
+
 WEB_LDFLAGS := \
 	-s WASM=1 \
 	-s ALLOW_MEMORY_GROWTH=1 \
-	-s TOTAL_MEMORY=256MB \
+	-s INITIAL_MEMORY=512MB \
+	-s STACK_SIZE=1MB \
 	$(EM_PORT_FLAGS) \
 	$(EM_THREAD_FLAGS) \
+	$(WEB_DEBUG_FLAGS) \
 	-s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
 	-s EXPORTED_FUNCTIONS='["_main","_keyboard_on_all_keys_up"]' \
 	-s FORCE_FILESYSTEM=1 \

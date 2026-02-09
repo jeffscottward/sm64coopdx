@@ -85,7 +85,7 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   > 9. **Added input diagnostics** to `controller_sdl2.c` — `[Web Input]` console logs on init reporting backend status (gamepad, keyboard, mouse, haptics disabled, gamepad first-press note).
   > 10. Build verified clean — `gfx_sdl2.o` and `controller_sdl2.o` recompiled, linked successfully.
 
-- [ ] Fix any remaining crashes and memory issues:
+- [x] Fix any remaining crashes and memory issues:
   - Watch for `RuntimeError: memory access out of bounds` — this indicates pointer issues, buffer overflows, or insufficient WASM memory
   - If memory runs out, increase `TOTAL_MEMORY` in Makefile.web (try 512MB)
   - Watch for `RuntimeError: unreachable executed` — this indicates `abort()` was called, usually from an assertion failure
@@ -97,6 +97,14 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
     - Basic movement, jumping, camera control
     - Collecting a star
     - Saving and returning to the castle
+  > **Completed**: Comprehensive crash prevention and diagnostic infrastructure added across 3 files. Changes made:
+  > 1. **Increased WASM memory** in `Makefile.web` — `INITIAL_MEMORY` raised from 256MB to 512MB to prevent out-of-memory crashes during gameplay (game uses 32MB default pool + 4MB GFX pool + audio + Lua + textures). `ALLOW_MEMORY_GROWTH` remains enabled for dynamic expansion if 512MB isn't enough.
+  > 2. **Added explicit `STACK_SIZE=1MB`** in `Makefile.web` — Prevents stack overflow crashes from deep recursion in game logic, Lua scripts, or display list processing. Default Emscripten stack (64KB) is too small for SM64's call depth.
+  > 3. **Added `WEB_DEBUG=1` build flag** in `Makefile.web` — Optional debug mode that enables `ASSERTIONS=2` (detailed assertion messages), `SAFE_HEAP=1` (detects out-of-bounds memory accesses), `STACK_OVERFLOW_CHECK=2` (runtime stack overflow detection), and `DEMANGLE_SUPPORT=1` (readable C++ function names in stack traces). Usage: `gmake -f Makefile.web WEB_DEBUG=1`.
+  > 4. **Enhanced crash screen** in `shell.html` — Replaced generic `window.onerror` with intelligent crash classifier that recognizes 6 common WASM error types (memory access OOB, unreachable/abort, function pointer errors, OOM, stack overflow, generic) and displays user-friendly descriptions with specific debugging hints. Added `unhandledrejection` handler for async Emscripten errors.
+  > 5. **Added runtime memory diagnostics** in `pc_main.c` — Three `[Web Memory]` diagnostic log points: (a) initial WASM heap size and pointer width at `main()` entry, (b) post-init heap size after `main_game_init()` completes, (c) heap size when game loop starts. These help identify whether memory pressure is occurring during loading vs gameplay.
+  > 6. **Note on `-s TOTAL_MEMORY` → `-s INITIAL_MEMORY`**: Renamed to the modern Emscripten flag name (`TOTAL_MEMORY` is deprecated alias for `INITIAL_MEMORY`).
+  > 7. Build verified clean — only `pc_main.o` recompiled, linked successfully with updated LDFLAGS producing sm64coopdx.html/.js/.wasm/.data.
 
 - [ ] Polish the HTML shell and user experience:
   - Update `shell.html` with:

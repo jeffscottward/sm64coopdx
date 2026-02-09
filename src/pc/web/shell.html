@@ -146,8 +146,18 @@
     #error-overlay p {
       color: #f66;
       font-size: 0.95rem;
-      max-width: 520px;
-      line-height: 1.5;
+      max-width: 600px;
+      line-height: 1.6;
+      text-align: left;
+    }
+
+    #error-overlay p strong {
+      font-size: 1.1rem;
+      color: #ff8888;
+    }
+
+    #error-overlay p small {
+      font-style: italic;
     }
 
     /* Audio hint — shown when AudioContext is suspended */
@@ -397,8 +407,66 @@
     /* When status is set before the overlays exist, queue it */
     Module.setStatus('Downloading...');
 
-    /* Handle uncaught errors */
-    window.onerror = function(message, url, line, col, error) {
+    /**
+     * WASM crash diagnostics — translates common RuntimeError messages
+     * into user-friendly descriptions with debugging hints.
+     */
+    function classifyCrashError(message, error) {
+      var msg = String(message || '');
+      var stack = (error && error.stack) ? error.stack : '';
+
+      if (msg.indexOf('memory access out of bounds') !== -1) {
+        return {
+          title: 'Memory Access Error',
+          detail: 'The game attempted to read or write memory outside its allocated bounds. ' +
+                  'This is typically caused by a null pointer dereference, buffer overflow, or ' +
+                  'insufficient WASM memory.',
+          hint: 'Try rebuilding with WEB_DEBUG=1 for more details, or increase INITIAL_MEMORY in Makefile.web.'
+        };
+      }
+      if (msg.indexOf('unreachable') !== -1) {
+        return {
+          title: 'Assertion Failure (unreachable)',
+          detail: 'The game hit an abort() or assertion failure. This means a condition the ' +
+                  'code expected to be true was violated.',
+          hint: 'Rebuild with WEB_DEBUG=1 (enables ASSERTIONS=2) to see the exact assertion message.'
+        };
+      }
+      if (msg.indexOf('table index is out of bounds') !== -1 ||
+          msg.indexOf('null function') !== -1 ||
+          msg.indexOf('indirect call') !== -1) {
+        return {
+          title: 'Function Pointer Error',
+          detail: 'The game tried to call a function through an invalid pointer. This can ' +
+                  'happen with corrupted vtables or bad function pointer casts.',
+          hint: 'Check for uninitialized function pointers or ABI mismatches in native code.'
+        };
+      }
+      if (msg.indexOf('out of memory') !== -1 || msg.indexOf('OOM') !== -1 ||
+          msg.indexOf('Cannot enlarge memory') !== -1) {
+        return {
+          title: 'Out of Memory',
+          detail: 'The game exhausted available WebAssembly memory. The browser could not ' +
+                  'allocate more memory for the game.',
+          hint: 'Increase INITIAL_MEMORY in Makefile.web (currently 512MB). Some browsers limit ' +
+                'WASM memory to ~2GB on 32-bit or ~4GB on 64-bit.'
+        };
+      }
+      if (msg.indexOf('stack overflow') !== -1 || msg.indexOf('call stack') !== -1) {
+        return {
+          title: 'Stack Overflow',
+          detail: 'The game exceeded its stack size, likely from deep or infinite recursion.',
+          hint: 'Increase STACK_SIZE in Makefile.web (currently 1MB) or investigate recursive calls.'
+        };
+      }
+      return {
+        title: 'Runtime Error',
+        detail: msg,
+        hint: 'Check the browser DevTools console (F12) for the full error stack trace.'
+      };
+    }
+
+    function showCrashScreen(message, error) {
       var loadingOverlay = document.getElementById('loading-overlay');
       var errorOverlay = document.getElementById('error-overlay');
       var errorText = document.getElementById('error-text');
@@ -406,9 +474,34 @@
       loadingOverlay.style.display = 'none';
       document.getElementById('rom-overlay').style.display = 'none';
       document.getElementById('canvas').style.display = 'none';
+      document.getElementById('audio-hint').style.display = 'none';
       errorOverlay.style.display = 'flex';
-      errorText.textContent = 'Error: ' + message;
+
+      var info = classifyCrashError(message, error);
+      errorText.innerHTML = '<strong>' + info.title + '</strong><br><br>' +
+                            info.detail + '<br><br>' +
+                            '<small style="color:#aaa">' + info.hint + '</small>';
+
+      /* Log full details to console for developers */
+      console.error('[SM64CoopDX Crash]', info.title);
+      console.error('[SM64CoopDX Crash] Detail:', info.detail);
+      console.error('[SM64CoopDX Crash] Raw message:', message);
+      if (error && error.stack) {
+        console.error('[SM64CoopDX Crash] Stack trace:', error.stack);
+      }
+    }
+
+    /* Handle uncaught errors (synchronous throws, WASM traps) */
+    window.onerror = function(message, url, line, col, error) {
+      showCrashScreen(message, error);
     };
+
+    /* Handle unhandled promise rejections (async errors from Emscripten) */
+    window.addEventListener('unhandledrejection', function(event) {
+      var error = event.reason;
+      var message = (error && error.message) ? error.message : String(error);
+      showCrashScreen(message, error);
+    });
   </script>
 
   <!--

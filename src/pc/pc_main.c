@@ -496,6 +496,14 @@ void* main_game_init(UNUSED void* dummy) {
     mumble_init();
 
     gGameInited = true;
+#ifdef __EMSCRIPTEN__
+    printf("[Web Memory] Game init complete\n");
+    EM_ASM({
+        var heapSize = HEAP8.length;
+        var mb = (heapSize / (1024 * 1024)).toFixed(1);
+        console.log('[Web Memory] Post-init WASM heap: ' + mb + ' MB');
+    });
+#endif
     return NULL;
 }
 
@@ -508,6 +516,16 @@ static f64 sWebAccumulator = 0.0;
 static f64 sWebLastTime = 0.0;
 static bool sWebTimingInitialized = false;
 
+static void web_log_memory_stats(void) {
+    // Log WASM heap usage via Emscripten's HEAP size tracking.
+    // HEAP8.length gives the current WASM linear memory size in bytes.
+    EM_ASM({
+        var heapSize = HEAP8.length;
+        var mb = (heapSize / (1024 * 1024)).toFixed(1);
+        console.log('[Web Memory] WASM heap size: ' + mb + ' MB (' + heapSize + ' bytes)');
+    });
+}
+
 static void web_main_loop_iteration(void) {
     // One-time timing diagnostics on first frame
     if (!sWebTimingInitialized) {
@@ -518,6 +536,7 @@ static void web_main_loop_iteration(void) {
                get_display_refresh_rate(), get_target_refresh_rate());
         printf("[Web Timing] Using requestAnimationFrame (fps=0), delays disabled\n");
         printf("[Web Timing] Game logic gated to %d Hz, rendering at display rate\n", FRAMERATE);
+        web_log_memory_stats();
     }
 
     f64 now = clock_elapsed_f64();
@@ -593,6 +612,16 @@ static void web_main_loop_iteration(void) {
 #endif
 
 int main(int argc, char *argv[]) {
+#ifdef __EMSCRIPTEN__
+    printf("[Web Memory] main() entry — initial WASM heap: ");
+    EM_ASM({
+        var heapSize = HEAP8.length;
+        var mb = (heapSize / (1024 * 1024)).toFixed(1);
+        console.log('[Web Memory] Initial WASM heap: ' + mb + ' MB (' + heapSize + ' bytes)');
+        console.log('[Web Memory] sizeof(void*)=' + $0 + ' (32-bit WASM)');
+    }, (int)sizeof(void*));
+#endif
+
     // handle terminal arguments
     if (!parse_cli_opts(argc, argv)) { return 0; }
 
