@@ -1,14 +1,8 @@
 #ifndef THREADING_H
 #define THREADING_H
 
-#include <pthread.h>
-
 #include "cliopts.h"
 #include "types.h"
-
-// Macros
-#define MUTEX_LOCK(handle) if (handle.state == RUNNING) { lock_mutex(&handle); }
-#define MUTEX_UNLOCK(handle) if (handle.state == RUNNING) { unlock_mutex(&handle); }
 
 // Types
 enum ThreadState {
@@ -17,11 +11,36 @@ enum ThreadState {
     RUNNING = 2
 };
 
+#ifdef TARGET_WEB
+
+// Web build: single-threaded stubs.
+// No pthreads — thread entry functions are called directly on the main thread,
+// and mutex operations are no-ops. This avoids the SharedArrayBuffer requirement.
+
+struct ThreadHandle {
+    int dummy;  // placeholder so sizeof(struct ThreadHandle) > 0
+    enum ThreadState state;
+};
+
+// Mutex macros are no-ops on web since everything runs on the main thread.
+#define MUTEX_LOCK(handle)   ((void)0)
+#define MUTEX_UNLOCK(handle) ((void)0)
+
+#else /* !TARGET_WEB */
+
+#include <pthread.h>
+
+// Macros
+#define MUTEX_LOCK(handle) if (handle.state == RUNNING) { lock_mutex(&handle); }
+#define MUTEX_UNLOCK(handle) if (handle.state == RUNNING) { unlock_mutex(&handle); }
+
 struct ThreadHandle {
     pthread_t thread;
     pthread_mutex_t mutex;
     enum ThreadState state;
 };
+
+#endif /* TARGET_WEB */
 
 // Functions
 //// Thread Handle

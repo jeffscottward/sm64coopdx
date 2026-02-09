@@ -41,11 +41,34 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   > - Path constant macros (`WEB_EXE_PATH_DIR="/"`、`WEB_EXE_PATH_FILE="/sm64coopdx"`, `WEB_USER_PATH="/save"`, `WEB_RESOURCE_PATH="/"`) for use when `platform.c` is modified in a later task
   > - Verified compiles cleanly as both C and C++ with and without `TARGET_WEB` defined. Note: `<emscripten.h>` includes are guarded by `__EMSCRIPTEN__` so native builds are unaffected.
 
-- [ ] Modify the threading system to support Emscripten. Read `src/pc/thread.h` and `src/pc/thread.c` (find exact filename) and create a web-compatible version:
+- [x] Modify the threading system to support Emscripten. Read `src/pc/thread.h` and `src/pc/thread.c` (find exact filename) and create a web-compatible version:
   - When `TARGET_WEB` is defined, the threading implementation should use Emscripten's pthread support (which requires SharedArrayBuffer)
   - Alternatively, provide a single-threaded fallback: make `init_thread_handle()` simply call the entry function directly and return, make mutex operations no-ops
   - The safest initial approach is single-threaded: stub out threading so audio runs inline on the main thread
   - Create `src/pc/web/web_thread.c` with the single-threaded stubs that get compiled instead of the normal thread.c when `TARGET_WEB=1`
+
+  > **Completed 2026-02-09:** Implemented the single-threaded fallback approach (safest initial strategy). Three files modified/created:
+  >
+  > **`src/pc/thread.h`** — Added `#ifdef TARGET_WEB` conditional compilation:
+  > - Web builds use a simplified `ThreadHandle` struct with just `int dummy` + `enum ThreadState state` (no pthread members)
+  > - `MUTEX_LOCK()` and `MUTEX_UNLOCK()` macros become `((void)0)` no-ops for web (eliminates all mutex overhead in audio/loading code)
+  > - `#include <pthread.h>` is only included for native builds
+  > - Function declarations remain shared across both paths (same API surface)
+  >
+  > **`src/pc/thread.c`** — Added `#ifdef TARGET_WEB` / `#else` blocks:
+  > - Web path: `init_thread_handle()` and `init_thread()` call the entry function **directly on the main thread** (synchronous execution), then immediately set state to STOPPED
+  > - All mutex functions (`init_mutex`, `destroy_mutex`, `lock_mutex`, `trylock_mutex`, `unlock_mutex`) return 0 as no-ops
+  > - `join_thread()`, `detach_thread()`, `stop_thread()` simply mark state as STOPPED
+  > - Native path: original pthread implementation preserved unchanged
+  >
+  > **`src/pc/web/web_thread.c`** — Standalone alternative file with identical single-threaded stubs. Can be used in place of `thread.c` if the build system is configured to exclude `thread.c` for web builds and include `src/pc/web/` in SRC_DIRS. Includes `"pc/thread.h"` for standalone compilation.
+  >
+  > Threading usage in the codebase (all handled by this change):
+  > - `gAudioThread` (src/audio/data.c) — MUTEX_LOCK/UNLOCK used extensively in audio code → now no-ops
+  > - `gLoadingThread` (src/pc/loading.c) — background loading → will run synchronously on main thread
+  > - `gModRefreshThread` (src/pc/djui/djui_panel_host_mods.c) — mod refresh → will run synchronously
+  >
+  > Verified: Both native (without TARGET_WEB) and web (with TARGET_WEB=1) paths compile cleanly with gcc. Macro behavior confirmed correct in both modes.
 
 - [ ] Modify `src/pc/update_checker.c` to be disabled under `TARGET_WEB`. Read the file and:
   - Wrap the curl-dependent code in `#ifndef TARGET_WEB` / `#endif` blocks

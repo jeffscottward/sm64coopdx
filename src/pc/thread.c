@@ -3,6 +3,105 @@
 #include <assert.h>
 #include <string.h>
 
+#ifdef TARGET_WEB
+
+/*
+ * Single-threaded stubs for web/Emscripten builds.
+ *
+ * In the web build, all "threaded" work is run synchronously on the main
+ * thread. init_thread_handle() calls the entry function directly and returns.
+ * Mutex operations are no-ops (also stubbed in thread.h macros).
+ *
+ * This avoids the SharedArrayBuffer requirement for Emscripten pthreads,
+ * which needs special server headers (COOP/COEP) and has limited browser
+ * support for some features.
+ */
+
+int init_thread_handle(struct ThreadHandle *handle, void *(*entry)(void *), void *arg, void *sp, size_t sp_size) {
+    (void)sp;
+    (void)sp_size;
+    assert(handle != NULL);
+
+    handle->state = RUNNING;
+
+    // Call the entry function directly on the main thread (synchronous).
+    if (entry != NULL) {
+        entry(arg);
+    }
+
+    handle->state = STOPPED;
+    return 0;
+}
+
+void free_thread_handle(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    memset((void *)handle, 0, sizeof(struct ThreadHandle));
+}
+
+int init_thread(struct ThreadHandle *handle, void *(*entry)(void *), void *arg, void *sp, size_t sp_size) {
+    (void)sp;
+    (void)sp_size;
+    assert(handle != NULL);
+
+    handle->state = RUNNING;
+
+    if (entry != NULL) {
+        entry(arg);
+    }
+
+    handle->state = STOPPED;
+    return 0;
+}
+
+int join_thread(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    handle->state = STOPPED;
+    return 0;  // Already finished (ran synchronously)
+}
+
+int detach_thread(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    handle->state = STOPPED;
+    return 0;
+}
+
+void exit_thread() {
+    // No-op in single-threaded mode
+}
+
+int stop_thread(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    handle->state = STOPPED;
+    return 0;
+}
+
+int init_mutex(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    return 0;  // No-op
+}
+
+int destroy_mutex(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    return 0;  // No-op
+}
+
+int lock_mutex(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    return 0;  // No-op
+}
+
+int trylock_mutex(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    return 0;  // No-op (always succeeds)
+}
+
+int unlock_mutex(struct ThreadHandle *handle) {
+    assert(handle != NULL);
+    return 0;  // No-op
+}
+
+#else /* !TARGET_WEB */
+
 int init_thread_handle(struct ThreadHandle *handle, void *(*entry)(void *), void *arg, void *sp, size_t sp_size) {
     int err1 = init_mutex(handle);
     int err2 = init_thread(handle, entry, arg, sp, sp_size);
@@ -134,3 +233,5 @@ int unlock_mutex(struct ThreadHandle *handle) {
 
     return pthread_mutex_unlock(&handle->mutex);
 }
+
+#endif /* TARGET_WEB */
