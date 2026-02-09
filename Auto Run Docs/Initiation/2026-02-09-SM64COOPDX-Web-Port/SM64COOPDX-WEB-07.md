@@ -41,7 +41,7 @@ This phase implements multiplayer support for the web port by creating a new `Ne
   - `.requireServerBroadcast = true` — relay server handles message routing
   - Build verified: all 552+ source files compile and link successfully with emcc/em++
 
-- [ ] Create a WebSocket relay server (`tools/web_relay/`):
+- [x] Create a WebSocket relay server (`tools/web_relay/`):
   - Build a lightweight Node.js WebSocket server using the `ws` library:
     - `tools/web_relay/server.js` — main server file
     - `tools/web_relay/package.json` — dependencies (just `ws`)
@@ -54,6 +54,27 @@ This phase implements multiplayer support for the web port by creating a new `Ne
   - Add basic rate limiting and connection limits
   - Include a simple health check endpoint at `/health`
   - Document usage in a README in the relay directory
+
+  **Completion Notes (2026-02-09):**
+  - Created `tools/web_relay/server.js` — Node.js WebSocket relay server using the `ws` library:
+    - **Room management**: Host creates rooms (6-char alphanumeric code), clients join by code
+    - **Binary relay**: Messages forwarded with 1-byte sender index header; supports both broadcast (target `0xFF`) and targeted sends to specific client indices
+    - **Control protocol**: JSON text messages for `host`, `join`, `list` (dev only); server sends `hosted`, `joined`, `player_joined`, `player_left`, `room_closed`, `error`
+    - **Rate limiting**: 120 messages/second per connection (sliding window)
+    - **Connection limits**: Max 1000 total connections, 100 rooms, 16 players per room
+    - **Health check**: `GET /health` returns JSON with status, room count, connection count, uptime
+    - **Room lifecycle**: Host disconnect closes room and notifies all clients; stale rooms cleaned up every 60 seconds (4-hour expiry)
+    - **Room codes**: Use unambiguous characters (no I/O/0/1) to avoid confusion
+  - Created `tools/web_relay/package.json` — single dependency on `ws ^8.16.0`
+  - Created `tools/web_relay/test.js` — 39 automated tests covering:
+    - Health check endpoint, 404 handling
+    - Room creation, joining, room code validation
+    - Binary data relay (broadcast and targeted)
+    - Error handling (bad room codes, double host, invalid JSON, unknown message types)
+    - Client disconnect notifications, host disconnect room closure
+  - Created `tools/web_relay/README.md` — complete documentation with protocol reference, architecture diagram, configuration options
+  - All environment variables configurable: `WS_RELAY_PORT`, `WS_MAX_PLAYERS`, `WS_MAX_ROOMS`, `WS_MAX_CONNECTIONS`
+  - All 39 tests pass
 
 - [ ] Integrate the WebSocket backend into the game's network selection UI:
   - Read `src/pc/djui/djui_panel.c` and related DJUI panel files to understand the host/join UI

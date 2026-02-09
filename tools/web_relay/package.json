@@ -1,0 +1,14 @@
+{
+  "name": "sm64coopdx-web-relay",
+  "version": "1.0.0",
+  "description": "WebSocket relay server for SM64CoopDX web multiplayer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "license": "MIT"
+}
