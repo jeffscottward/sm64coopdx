@@ -36,7 +36,7 @@ This phase adapts the audio system, controller input, and networking layer for b
   - **Filesystem paths**: `fs_load_file("gamecontrollerdb.txt")` returns NULL if file not found; the `if (gcdata && gcsize)` guard at line 126 handles this gracefully. Additionally, this path is now skipped entirely for Emscripten via the `#ifndef __EMSCRIPTEN__` guard.
   - Tests: Native and Emscripten-simulated compilation guard tests pass with `-Wall -Wextra -Werror`.
 
-- [ ] Stub out the networking layer for single-player web builds:
+- [x] Stub out the networking layer for single-player web builds:
   - Read `src/pc/network/network.c` to understand how `gNetworkSystem` is assigned
   - Read `src/pc/network/socket/socket.c` (or the socket network system implementation) — this uses raw BSD sockets (`socket()`, `bind()`, `sendto()`, `recvfrom()`) which are unavailable in browsers
   - For `TARGET_WEB`, when `network_init` is called with `NT_NONE`, the existing code should work since it doesn't open sockets
@@ -44,6 +44,15 @@ This phase adapts the audio system, controller input, and networking layer for b
   - If any socket headers (`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`) are included unconditionally, wrap them in `#ifndef TARGET_WEB` guards
   - Emscripten provides partial POSIX socket stubs, but they don't actually work for UDP — better to guard them out explicitly
   - Check `src/pc/network/socket/socket.h` for platform includes that need guarding
+
+  **Completion Notes:**
+  - **socket_linux.h**: Added `#ifdef TARGET_WEB` / `#else` guard around the entire file. The web branch provides minimal type stubs (`SOCKET`, `INVALID_SOCKET`, `SOCKET_ERROR`, `NO_ERROR`, `SOCKET_EWOULDBLOCK`, `SOCKET_ECONNRESET`, `RX_ADDR_SIZE_TYPE`, `struct sockaddr_in6`, `struct in6_addr`, `INET6_ADDRSTRLEN`, `AF_INET6`) so that all downstream consumers (`socket.h` → `network.c`, `chat_commands.c`, `djui_panel_join_direct.c`, `djui_panel_join_lobbies.c`, `smlua_hooks.c`, `network_player.c`, `dev/chat.c`, `pc_main.c`) compile without pulling in unavailable POSIX headers (`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`, `<netdb.h>`, `<fcntl.h>`, `<unistd.h>`). The native branch is unchanged.
+  - **socket_linux.c**: Wrapped entire BSD socket implementation (`socket_initialize`, `socket_shutdown` using `socket()`, `fcntl()`, `setsockopt()`, `close()`) in `#ifndef TARGET_WEB` guard. These POSIX socket calls are unavailable in browsers.
+  - **socket.c**: Added `#ifdef TARGET_WEB` / `#else` guard around the entire implementation. The web branch provides a complete no-op `gNetworkSystemSocket` stub: `initialize()` returns `true` only for `NT_NONE` (preventing accidental server/client mode on web), `send()` returns `SOCKET_ERROR`, `dup_addr()` returns `NULL`, `match_addr()` returns `false`, all other functions are clean no-ops. `socket_initialize()` and `socket_shutdown()` are provided as trivial stubs. The native branch with `resolve_domain()`, `getaddrinfo()`, `sendto()`, `recvfrom()`, `bind()`, etc. is unchanged.
+  - **socket.h**: No changes needed — it dispatches to `socket_linux.h` (non-WINSOCK path) which now handles TARGET_WEB internally.
+  - **network_init(NT_NONE) flow verified**: `pc_main.c:636` calls `network_init(NT_NONE, false)`. In `network.c:147`, `gNetworkSystem->initialize(NT_NONE, false)` calls the web stub which returns `true`. The error check at line 148 (`!rc && inNetworkType != NT_NONE`) is skipped since `inNetworkType == NT_NONE`. `gNetworkType` is set to `NT_NONE`. No sockets are opened.
+  - **Downstream consumers**: 8 files include `socket.h` (via `socket_linux.h`). All compile cleanly because the stub types in `socket_linux.h` provide the necessary struct/type definitions.
+  - Tests: Native and TARGET_WEB compilation tests pass with `-Wall -Wextra -Werror`. Syntax checks on modified headers pass in both modes.
 
 - [ ] Handle Discord SDK and CoopNet exclusion cleanly:
   - Verify that `DISCORD_SDK=0` in the build flags properly excludes all Discord code via `#ifdef DISCORD_SDK` guards

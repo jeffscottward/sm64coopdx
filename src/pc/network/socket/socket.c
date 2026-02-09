@@ -4,6 +4,65 @@
 #include "pc/debuglog.h"
 #include "pc/djui/djui.h"
 
+#ifdef TARGET_WEB
+/*
+ * Web/Emscripten stub implementation of the socket networking system.
+ *
+ * Browsers cannot create raw UDP sockets, so all socket operations are
+ * no-ops. The web build runs single-player only with network_init(NT_NONE).
+ * gNetworkSystemSocket is still provided so that code referencing it
+ * (&gNetworkSystemSocket comparisons in network.c, chat_commands.c, etc.)
+ * compiles and links correctly.
+ */
+
+char gGetHostName[MAX_CONFIG_STRING] = "";
+
+SOCKET socket_initialize(void) { return INVALID_SOCKET; }
+void socket_shutdown(SOCKET socket) { (void)socket; }
+
+static bool ns_socket_web_initialize(UNUSED enum NetworkType networkType, UNUSED bool reconnecting) {
+    return (networkType == NT_NONE);
+}
+static s64 ns_socket_web_get_id(UNUSED u8 localId) { return 0; }
+static char* ns_socket_web_get_id_str(UNUSED u8 localId) {
+    static char id_str[] = "web";
+    return id_str;
+}
+static void ns_socket_web_save_id(UNUSED u8 localId, UNUSED s64 networkId) { }
+static void ns_socket_web_clear_id(UNUSED u8 localId) { }
+static void* ns_socket_web_dup_addr(UNUSED u8 localIndex) { return NULL; }
+static bool ns_socket_web_match_addr(UNUSED void* addr1, UNUSED void* addr2) { return false; }
+static void ns_socket_web_update(void) { }
+static int ns_socket_web_send(UNUSED u8 localIndex, UNUSED void* address, UNUSED u8* data, UNUSED u16 dataLength) {
+    return SOCKET_ERROR;
+}
+static void ns_socket_web_get_lobby_id(char* destination, u32 destLength) {
+    snprintf(destination, destLength, "%s", "");
+}
+static void ns_socket_web_get_lobby_secret(char* destination, u32 destLength) {
+    snprintf(destination, destLength, "%s", "");
+}
+static void ns_socket_web_shutdown(UNUSED bool reconnecting) { }
+
+struct NetworkSystem gNetworkSystemSocket = {
+    .initialize       = ns_socket_web_initialize,
+    .get_id           = ns_socket_web_get_id,
+    .get_id_str       = ns_socket_web_get_id_str,
+    .save_id          = ns_socket_web_save_id,
+    .clear_id         = ns_socket_web_clear_id,
+    .dup_addr         = ns_socket_web_dup_addr,
+    .match_addr       = ns_socket_web_match_addr,
+    .update           = ns_socket_web_update,
+    .send             = ns_socket_web_send,
+    .get_lobby_id     = ns_socket_web_get_lobby_id,
+    .get_lobby_secret = ns_socket_web_get_lobby_secret,
+    .shutdown         = ns_socket_web_shutdown,
+    .requireServerBroadcast = false,
+    .name             = "WebStub",
+};
+
+#else /* !TARGET_WEB — native socket implementation */
+
 static SOCKET sCurSocket = INVALID_SOCKET;
 static struct sockaddr_in6 sAddr[MAX_PLAYERS] = { 0 };
 struct addrinfo hints;
@@ -292,3 +351,5 @@ struct NetworkSystem gNetworkSystemSocket = {
     .requireServerBroadcast = true,
     .name             = "Socket",
 };
+
+#endif /* !TARGET_WEB */

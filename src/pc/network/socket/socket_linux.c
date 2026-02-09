@@ -1,4 +1,6 @@
 #ifndef WINSOCK
+#ifndef TARGET_WEB
+
 #include "socket_linux.h"
 #include "../network.h"
 #include "pc/debuglog.h"
@@ -38,4 +40,5 @@ void socket_shutdown(SOCKET socket) {
     }
 }
 
-#endif
+#endif /* !TARGET_WEB */
+#endif /* !WINSOCK */
