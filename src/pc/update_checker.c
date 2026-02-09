@@ -1,3 +1,21 @@
+#include "update_checker.h"
+
+#ifdef TARGET_WEB
+
+/*
+ * Web builds: Update checker is disabled entirely.
+ * libcurl and WinINet are unavailable in Emscripten.
+ * gUpdateMessage stays false, both functions are no-ops.
+ */
+
+bool gUpdateMessage = false;
+
+void show_update_popup(void) { }
+
+void check_for_updates(void) { }
+
+#else /* !TARGET_WEB */
+
 #include <stdio.h>
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -6,7 +24,6 @@
 #include <curl/curl.h>
 #endif
 
-#include "update_checker.h"
 #include "pc/djui/djui.h"
 #include "pc/network/version.h"
 #include "pc/loading.h"
@@ -158,3 +175,5 @@ void check_for_updates(void) {
         gUpdateMessage = true;
     }
 }
+
+#endif /* !TARGET_WEB */

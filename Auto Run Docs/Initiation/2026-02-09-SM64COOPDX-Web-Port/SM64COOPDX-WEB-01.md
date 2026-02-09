@@ -70,11 +70,18 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   >
   > Verified: Both native (without TARGET_WEB) and web (with TARGET_WEB=1) paths compile cleanly with gcc. Macro behavior confirmed correct in both modes.
 
-- [ ] Modify `src/pc/update_checker.c` to be disabled under `TARGET_WEB`. Read the file and:
+- [x] Modify `src/pc/update_checker.c` to be disabled under `TARGET_WEB`. Read the file and:
   - Wrap the curl-dependent code in `#ifndef TARGET_WEB` / `#endif` blocks
   - Make `check_for_updates()` a no-op when `TARGET_WEB` is defined
   - Make `show_update_popup()` a no-op when `TARGET_WEB` is defined
   - This avoids linking against libcurl which is unavailable in Emscripten
+
+  > **Completed 2026-02-09:** Wrapped the entire file in `#ifdef TARGET_WEB` / `#else` / `#endif` guards. Structure:
+  > - **Web path (`TARGET_WEB` defined):** Only includes `update_checker.h`. Provides `gUpdateMessage = false` (always), and empty no-op implementations of `show_update_popup()` and `check_for_updates()`. No curl, WinINet, djui, or loading headers are included — zero native dependencies.
+  > - **Native path (`TARGET_WEB` not defined):** Original implementation preserved unchanged with all curl/WinINet code, version parsing, and update popup logic.
+  > - The `#include "update_checker.h"` is placed before the `#ifdef` so `stdbool.h` (for the `bool` type) is available in both paths.
+  > - Callers (`pc_main.c`, `djui_panel_host.c`, `djui_panel_main.c`, `djui_panel_join.c`) need no changes — they check `gUpdateMessage` which is always `false` for web, and call functions that are valid no-ops.
+  > - Verified: Compiles cleanly with `gcc -DTARGET_WEB -I src -I src/pc`.
 
 - [ ] Handle the `rom_checker.cpp` file for web builds. Read `src/pc/rom_checker.cpp` fully and:
   - The `<filesystem>` header and `std::filesystem` may not be fully supported in Emscripten
