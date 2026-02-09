@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test.js"
+    "test": "node test.js",
+    "test:connectivity": "node test_connectivity.js",
+    "test:all": "node test.js && node test_connectivity.js"
   },
   "dependencies": {
     "ws": "^8.16.0"
