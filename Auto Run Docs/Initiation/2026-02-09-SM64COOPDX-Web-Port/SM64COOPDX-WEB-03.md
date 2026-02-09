@@ -54,12 +54,20 @@ This phase adapts the audio system, controller input, and networking layer for b
   - **Downstream consumers**: 8 files include `socket.h` (via `socket_linux.h`). All compile cleanly because the stub types in `socket_linux.h` provide the necessary struct/type definitions.
   - Tests: Native and TARGET_WEB compilation tests pass with `-Wall -Wextra -Werror`. Syntax checks on modified headers pass in both modes.
 
-- [ ] Handle Discord SDK and CoopNet exclusion cleanly:
+- [x] Handle Discord SDK and CoopNet exclusion cleanly:
   - Verify that `DISCORD_SDK=0` in the build flags properly excludes all Discord code via `#ifdef DISCORD_SDK` guards
   - Read `src/pc/discord/discord.c` briefly to confirm it's fully behind `#ifdef DISCORD_SDK`
   - Verify `COOPNET=0` properly excludes CoopNet code via `#ifdef COOPNET` guards
   - Read `src/pc/network/coopnet/` files briefly to confirm proper guarding
   - Check for any linker references to Discord or CoopNet symbols that might slip through despite the define being 0
+
+  **Completion Notes:**
+  - **Discord SDK exclusion (DISCORD_SDK=0)**: Verified clean exclusion via two complementary mechanisms. First, the Makefile conditionally includes `src/pc/discord` in `SRC_DIRS` only when `DISCORD_SDK=1` (Makefile line 521-522), so `discord.c`, `discord_activity.c`, and `discord_game_sdk.h` are never compiled for web builds. Second, the `-DDISCORD_SDK` preprocessor flag is only added when `DISCORD_SDK=1` (Makefile lines 1061-1063). All external references to Discord symbols (`discord_update()`, `discord_activity_update()`, `gDiscordInitialized`, `discord_get_user_id()`) are properly guarded by `#ifdef DISCORD_SDK` in their call sites: `pc_main.c` (lines 488-490, 647-649), `network.c` (lines 184-188, 796-800), `network_player.c` (lines 361-365, 415-419), and `smlua_misc_utils.c` (lines 493-505 for `get_local_discord_id()`). The Discord source files themselves do NOT need internal `#ifdef` guards because they're excluded at the build system level.
+  - **CoopNet exclusion (COOPNET=0)**: Verified clean exclusion via preprocessor guards. Unlike Discord, the `src/pc/network/coopnet` directory IS always in `SRC_DIRS` (Makefile line 519), but the `-DCOOPNET` flag is only added when `COOPNET=1` (lines 1067-1069). The main implementation file `coopnet.c` wraps its entire body (lines 16-320) in `#ifdef COOPNET`/`#endif`, including the `gNetworkSystemCoopNet` symbol definition. The header `coopnet.h` similarly wraps all declarations in `#ifdef COOPNET`. The utility file `coopnet_id.c` is NOT guarded but contains only self-contained helper functions (ID management, dest ID tracking) that don't call external CoopNet library functions — they operate on local arrays and are harmless when compiled without the CoopNet library. All external references to CoopNet symbols are properly guarded: `network.c` (lines 102-104 for `gNetworkSystemCoopNet`, lines 464-466 for reconnect, lines 552-570 for update), `smlua_misc_utils.c` (lines 507-517 for `get_coopnet_id()`), and `discord_activity.c` (lines 8-10, 34-51, 146-157 for `#ifdef COOPNET` blocks).
+  - **Lua bindings**: `smlua_functions_autogen.c` binds `network_discord_id_from_local_index`, `get_local_discord_id`, and `get_coopnet_id` unconditionally (lines 38354, 38960-38961), but these wrapper functions are safe — they call C implementations that have internal `#ifdef` guards returning fallback values ("0" for Discord, "-1" for CoopNet) when the features are disabled.
+  - **Linker references**: No unguarded symbol references found. CoopNet/Discord native libraries are only linked when their respective flags are 1 (Makefile lines 598-616 for Discord, 970-996 for CoopNet).
+  - **No code changes required** — the existing guard structure is complete and correct for web builds.
+  - Tests: Compilation guard tests pass in all three modes (disabled, enabled, mixed) with `-Wall -Wextra -Werror`.
 
 - [ ] Handle the Mumble positional audio integration:
   - Read `src/pc/mumble/mumble.c` — this uses shared memory (`shm_open`, `mmap`) which doesn't exist in browsers
