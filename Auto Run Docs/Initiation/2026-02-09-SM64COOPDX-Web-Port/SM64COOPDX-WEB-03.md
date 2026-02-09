@@ -21,12 +21,20 @@ This phase adapts the audio system, controller input, and networking layer for b
   - **Audio pipeline POSIX audit**: `create_next_audio_buffer()` calls `synthesis_execute()` which is pure audio DSP. All N64 OS primitives (`osPiStartDma`, `osInvalDCache`, `osRecvMesg`, etc.) are already reimplemented as portable C stubs in `ultra_reimplementation.c` (memcpy/no-ops). No POSIX-specific features found.
   - Tests: Native and Emscripten-stub compilation tests pass with `-Wall -Wextra -Werror`.
 
-- [ ] Verify and fix controller/input handling for Emscripten:
+- [x] Verify and fix controller/input handling for Emscripten:
   - Read `src/pc/controller/controller_sdl.c` (or similar) — Emscripten's SDL2 maps browser Gamepad API to SDL_GameController
   - Read `src/pc/controller/controller_keyboard.c` — keyboard input via SDL2 events should work unmodified in Emscripten
   - Read `src/pc/controller/controller_mouse.c` — mouse input should work, but pointer lock (for camera control) needs `emscripten_request_pointerlock` or SDL's relative mouse mode
   - Check for any platform-specific scan code mappings that might differ in browser SDL2
   - Ensure the controller bind mapping system doesn't rely on filesystem paths that don't exist in WASM VFS
+
+  **Completion Notes:**
+  - **controller_sdl2.c**: Added `#ifndef __EMSCRIPTEN__` guards around all SDL_Haptic subsystem code (variables, init, helper function, rumble play/stop, shutdown cleanup) and `gamecontrollerdb.txt` file loading. Emscripten's SDL2 port does not include a functional haptic backend, and the browser's Gamepad API is mapped natively by Emscripten without needing external mapping files. Rumble functions become clean no-ops on web with `(void)` casts to suppress unused parameter warnings.
+  - **controller_keyboard.c**: Verified fully compatible — uses only `keyboard_on_key_down`/`keyboard_on_key_up` callbacks invoked from `gfx_sdl2.c` SDL event loop. No platform-specific code. `controller_keyboard.h` has `#ifdef __APPLE__` for control key scancodes; Emscripten correctly falls through to the non-Apple branch.
+  - **controller_mouse.c**: Verified fully compatible — uses `SDL_SetRelativeMouseMode()` (Emscripten maps this to the Pointer Lock API), `SDL_GetRelativeMouseState()`, and `SDL_GetMouseState()`. All `WAPI_DXGI`-specific code is properly guarded. No changes needed.
+  - **controller_bind_mapping.c**: Uses SDL_Scancode values which are identical in Emscripten's SDL2 port. The `windows_scancode_table` mapping is SDL-internal and portable. No changes needed.
+  - **Filesystem paths**: `fs_load_file("gamecontrollerdb.txt")` returns NULL if file not found; the `if (gcdata && gcsize)` guard at line 126 handles this gracefully. Additionally, this path is now skipped entirely for Emscripten via the `#ifndef __EMSCRIPTEN__` guard.
+  - Tests: Native and Emscripten-simulated compilation guard tests pass with `-Wall -Wextra -Werror`.
 
 - [ ] Stub out the networking layer for single-player web builds:
   - Read `src/pc/network/network.c` to understand how `gNetworkSystem` is assigned
