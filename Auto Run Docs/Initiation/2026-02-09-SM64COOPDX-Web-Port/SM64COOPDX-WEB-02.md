@@ -51,12 +51,28 @@ This phase adapts the OpenGL rendering backend to work with WebGL 2.0 via Emscri
   > 14. **gfx_sdl struct**: All 21 function pointers verified unchanged and correctly assigned.
   > 15. **Validation**: Preprocessor conditional balance verified (19 `__EMSCRIPTEN__` references, depth 0 final). Native code paths structurally unchanged.
 
-- [ ] Fix `src/pc/gfx/gfx_pc.c` for Emscripten compatibility. Read the file (it's ~83KB, focus on key areas):
+- [x] Fix `src/pc/gfx/gfx_pc.c` for Emscripten compatibility. Read the file (it's ~83KB, focus on key areas):
   - Search for any direct OpenGL calls (there shouldn't be many since it goes through the rendering API abstraction)
   - Check for any `#include` that pulls in platform-specific GL headers
   - Verify the `gfx_init`, `gfx_start_frame`, `gfx_run`, `gfx_end_frame` functions work with the adapted backends
   - Check for any memory-mapped IO or pointer arithmetic that might behave differently in WASM (32-bit pointers, alignment)
   - The `MAX_CACHED_TEXTURES` (4096) and texture hashmap should work fine in WASM but verify memory usage is reasonable
+
+  > **Completed** — Full audit of gfx_pc.c (2261 lines). **No code changes needed** — file is already Emscripten-compatible. Findings:
+  > 1. **Direct OpenGL calls**: NONE. Only a comment on line 1674 references `glClear`. All rendering goes through `gfx_rapi` function pointer abstraction.
+  > 2. **GL headers**: NONE included. All includes are standard C (`math.h`, `stdint.h`, `stdlib.h`, `stdio.h`, `string.h`, `stdbool.h`), `stb_image.h`, `PR/gbi.h`, and project-local headers (`gfx_cc.h`, `gfx_pc.h`, `gfx_rendering_api.h`, etc.).
+  > 3. **`gfx_init` (line 1981)**: Calls `gfx_wapi->init()` and `gfx_rapi->init()` through function pointers — these are the already-adapted SDL2 and OpenGL backends from earlier tasks.
+  > 4. **`gfx_start_frame` (line 1996)**: Calls `gfx_wapi->handle_events()` and `gfx_wapi->get_dimensions()` — both adapted in gfx_sdl2.c. No direct platform code.
+  > 5. **`gfx_run` (line 2017)**: Calls `gfx_wapi->start_frame()` and `gfx_rapi->start_frame()` then processes the display list. Purely abstract.
+  > 6. **`gfx_end_frame` (line 2048)**: Calls `gfx_rapi->end_frame()`, `gfx_rapi->finish_render()`, `gfx_wapi->swap_buffers_begin/end()`. All abstract.
+  > 7. **SSE intrinsics (lines 8-9, 748-775)**: Properly guarded with `#ifdef __SSE__`. Emscripten does not define `__SSE__` by default, so the scalar fallback code (lines 770-774) is used automatically. No changes needed.
+  > 8. **`OPTIMIZE_O3` macro**: Defined in `macros.h` as empty for clang (Emscripten's compiler). Functions marked with it compile normally.
+  > 9. **`ALIGNED16` on Mat4 matrices (lines 57-59)**: WASM supports aligned memory allocation. No issues.
+  > 10. **`seg_addr` (line 1719-1721)**: Simple `uintptr_t` → `void*` cast. In WASM32, both are 32-bit. No pointer size issues.
+  > 11. **TextureCache memory (~130KB)**: `hashmap[8192]` pointers = ~32KB (4-byte WASM ptrs), `pool[4096]` nodes × ~24 bytes = ~98KB. Very reasonable for browser WASM.
+  > 12. **`buf_vbo` static array (line 111)**: 256 × 26 × 3 = 19,968 floats × 4 bytes = ~78KB. Reasonable.
+  > 13. **No `malloc`/`free`/`mmap`/`sleep`/`usleep`**: All data is statically allocated or stack-local. No platform-specific system calls.
+  > 14. **No `#ifdef __EMSCRIPTEN__` blocks needed**: The file is entirely platform-agnostic through its use of the rendering API abstraction layer.
 
 - [ ] Create `src/pc/gfx/gfx_web_util.h` with helper macros and functions for web rendering:
   - Provide canvas resize utility that syncs the HTML5 canvas size with the CSS display size (prevents blurry rendering)
