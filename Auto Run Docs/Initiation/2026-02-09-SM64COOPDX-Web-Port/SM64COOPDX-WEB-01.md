@@ -25,13 +25,21 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
 
   > **Completed 2026-02-09:** Created `Makefile.web` in project root. The wrapper passes all Emscripten overrides to the main Makefile via command-line variables. Also includes `-Wno-format-security -Wno-trigraphs` in EXTRA_CFLAGS since command-line overrides prevent the main Makefile's `+=` from appending them. Dry-run verified successfully — all overrides propagate correctly. Note: LDFLAGS is fully overridden (not appended), so native libraries like `-lcurl`, `-lz`, and Lua are replaced by Emscripten equivalents (`-s USE_ZLIB=1`, etc.). Lua linking will need to be addressed in a later phase when the full build is attempted.
 
-- [ ] Create `src/pc/web/web_compat.h` — a compatibility header for web-specific preprocessor guards and stubs. This file should:
+- [x] Create `src/pc/web/web_compat.h` — a compatibility header for web-specific preprocessor guards and stubs. This file should:
   - Provide `#ifdef TARGET_WEB` guards
   - Stub out `curl` usage by defining `NO_UPDATE_CHECKER` when `TARGET_WEB` is defined
   - Provide `#include <emscripten.h>` and `#include <emscripten/html5.h>` when `__EMSCRIPTEN__` is defined
   - Define `LOADING_SCREEN_SUPPORTED` behavior for web (disable threaded loading screen since it needs special handling)
   - Stub out `sys_exe_path_dir()` and `sys_exe_path_file()` for web (return empty string or "/")
   - Create the directory `src/pc/web/` if it doesn't exist
+
+  > **Completed 2026-02-09:** Created `src/pc/web/` directory and `src/pc/web/web_compat.h`. The header provides:
+  > - `#ifdef TARGET_WEB` outer guard wrapping all web-specific definitions
+  > - `NO_UPDATE_CHECKER` define to disable curl-dependent update checker
+  > - `WEB_LOADING_SCREEN_DISABLED` flag for disabling the threaded loading screen (the loading screen uses pthreads with mutex locking in `loading.h` gated by `LOADING_SCREEN_SUPPORTED`; full threading support requires SharedArrayBuffer which needs special handling in later phases)
+  > - Conditional `#include <emscripten.h>` and `#include <emscripten/html5.h>` under `__EMSCRIPTEN__`
+  > - Path constant macros (`WEB_EXE_PATH_DIR="/"`、`WEB_EXE_PATH_FILE="/sm64coopdx"`, `WEB_USER_PATH="/save"`, `WEB_RESOURCE_PATH="/"`) for use when `platform.c` is modified in a later task
+  > - Verified compiles cleanly as both C and C++ with and without `TARGET_WEB` defined. Note: `<emscripten.h>` includes are guarded by `__EMSCRIPTEN__` so native builds are unaffected.
 
 - [ ] Modify the threading system to support Emscripten. Read `src/pc/thread.h` and `src/pc/thread.c` (find exact filename) and create a web-compatible version:
   - When `TARGET_WEB` is defined, the threading implementation should use Emscripten's pthread support (which requires SharedArrayBuffer)
