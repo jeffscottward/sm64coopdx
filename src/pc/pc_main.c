@@ -23,6 +23,7 @@
 #include "audio/audio_api.h"
 #include "audio/audio_sdl.h"
 #include "audio/audio_null.h"
+#include "audio/audio_web.h"
 
 #include "rom_assets.h"
 #include "rom_checker.h"
@@ -588,6 +589,10 @@ int main(int argc, char *argv[]) {
     if (!audio_api && audio_sdl.init()) audio_api = &audio_sdl;
 #endif
     if (!audio_api) audio_api = &audio_null;
+
+    // On web builds, install a one-time user interaction handler to resume
+    // the Web Audio AudioContext (browser autoplay policy workaround).
+    audio_web_setup_resume();
 
     // Initialize the audio thread if possible.
     // init_thread_handle(&gAudioThread, audio_thread, NULL, NULL, 0);
