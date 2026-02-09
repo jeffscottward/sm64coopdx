@@ -106,7 +106,7 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   > 6. **Note on `-s TOTAL_MEMORY` → `-s INITIAL_MEMORY`**: Renamed to the modern Emscripten flag name (`TOTAL_MEMORY` is deprecated alias for `INITIAL_MEMORY`).
   > 7. Build verified clean — only `pc_main.o` recompiled, linked successfully with updated LDFLAGS producing sm64coopdx.html/.js/.wasm/.data.
 
-- [ ] Polish the HTML shell and user experience:
+- [x] Polish the HTML shell and user experience:
   - Update `shell.html` with:
     - A clear "Upload ROM" button that is prominent and styled
     - Loading progress bar during WASM download and initialization
@@ -116,3 +116,11 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   - Add CSS for the canvas: `canvas { display: block; margin: auto; background: #000; }`
   - Set a reasonable default canvas size (960x720 or similar 4:3 ratio)
   - Test in Chrome, Firefox, and Safari (Safari has WebGL limitations — note any issues)
+  > **Completed**: Comprehensive UX polish of `shell.html` with 6 improvements across layout, interaction, and browser compatibility. Changes made:
+  > 1. **Added "Click to Start" overlay** — New `#start-overlay` appears after WASM loading completes, displayed over the canvas with semi-transparent background. Click or any keypress dismisses it, resumes the AudioContext (satisfying browser autoplay policy), focuses the canvas for keyboard input, and enables the fullscreen button. This replaces the previous immediate-focus approach with a proper user gesture gate.
+  > 2. **Added fullscreen button** — Fixed-position button (`#fullscreen-btn`) in the bottom-right corner, visible only during gameplay and only when the browser supports the Fullscreen API. Uses `container.requestFullscreen()` with webkit prefix fallback for Safari. Icon toggles between expand/close based on fullscreen state. Button click stops propagation to avoid triggering canvas click-to-focus. Since the game's C code (`gfx_sdl2.c`) explicitly disables SDL fullscreen on Emscripten, this JS-side Fullscreen API integration is the correct approach.
+  > 3. **Polished canvas CSS** — Added `background: #000` and `margin: auto` to the canvas. Set initial canvas dimensions to 960x720 (4:3 aspect ratio) before the first frame, then expands to fill viewport after "Click to Start" interaction.
+  > 4. **Enhanced ROM upload button** — Increased to `inline-flex` with larger padding (16px 40px), bigger font (1.1rem), `box-shadow` glow effect, hover lift animation (`translateY(-1px)`), and pressed depression feedback. More prominent and game-launch-appropriate.
+  > 5. **Added browser compatibility documentation** — HTML comment block documenting Chrome 90+, Firefox 89+, Safari 15.2+ (WebGL2, memory limits, no iPhone fullscreen), Edge (same as Chrome), and mobile (touch input not mapped, virtual gamepad needed).
+  > 6. **Crash screen cleanup** — Updated `showCrashScreen()` to also hide the new `#start-overlay` and `#fullscreen-btn` elements. Added `.btn-secondary` class for consistent reload button styling.
+  > 7. Build verified — only link step re-ran (shell.html is a linker template), producing updated sm64coopdx.html/.js/.wasm successfully.

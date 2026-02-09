@@ -20,6 +20,17 @@
 
     Without these headers, SharedArrayBuffer is undefined and any pthread
     features will fail at runtime.
+
+    Browser compatibility notes:
+    - Chrome 90+: Full WebGL2, WebAssembly, Gamepad API support. Recommended.
+    - Firefox 89+: Full support. May have slightly different audio buffer behavior.
+    - Safari 15.2+: WebGL2 supported. WebAssembly works but may have memory
+      limits (~1GB). Pointer lock requires user gesture. Gamepad API supported
+      but may not report all axes. SharedArrayBuffer requires COOP/COEP headers.
+      Safari does NOT support the Fullscreen API on iPhone (iPad is supported).
+    - Edge (Chromium-based): Same as Chrome.
+    - Mobile browsers: Touch input is not currently mapped to game controls.
+      A virtual gamepad overlay would be needed for mobile play.
   -->
   <style>
     * {
@@ -44,12 +55,16 @@
       justify-content: center;
       width: 100%;
       height: 100%;
+      position: relative;
     }
 
+    /* Game canvas — 4:3 aspect ratio, centered, black background */
     #canvas {
       display: none;
       border: none;
       outline: none;
+      margin: auto;
+      background: #000;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
     }
@@ -66,7 +81,7 @@
     }
 
     #rom-overlay h1 {
-      font-size: 2rem;
+      font-size: 2.4rem;
       font-weight: 700;
       letter-spacing: 0.02em;
     }
@@ -79,24 +94,31 @@
     }
 
     #rom-upload-btn {
-      display: inline-block;
-      padding: 14px 36px;
-      font-size: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 40px;
+      font-size: 1.1rem;
       font-weight: 600;
       color: #fff;
       background: #e03030;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+      box-shadow: 0 4px 16px rgba(224, 48, 48, 0.3);
     }
 
     #rom-upload-btn:hover {
       background: #c02020;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(224, 48, 48, 0.4);
     }
 
     #rom-upload-btn:active {
       background: #a01818;
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(224, 48, 48, 0.3);
     }
 
     /* Loading overlay — shown while WASM boots and assets extract */
@@ -132,6 +154,41 @@
       transition: width 0.2s;
     }
 
+    /* Click-to-start overlay — shown after loading, before gameplay */
+    #start-overlay {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 500;
+      cursor: pointer;
+    }
+
+    #start-overlay h2 {
+      font-size: 1.6rem;
+      font-weight: 600;
+      color: #fff;
+      animation: start-pulse 2s ease-in-out infinite;
+    }
+
+    #start-overlay p {
+      color: #aaa;
+      font-size: 0.85rem;
+    }
+
+    @keyframes start-pulse {
+      0%, 100% { opacity: 0.7; }
+      50% { opacity: 1; }
+    }
+
     /* Error display */
     #error-overlay {
       display: none;
@@ -158,6 +215,53 @@
 
     #error-overlay p small {
       font-style: italic;
+    }
+
+    /* Shared button style for retry/reload */
+    .btn-secondary {
+      display: inline-block;
+      padding: 12px 32px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      background: #444;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-secondary:hover {
+      background: #555;
+    }
+
+    .btn-secondary:active {
+      background: #333;
+    }
+
+    /* Fullscreen button — fixed bottom-right corner */
+    #fullscreen-btn {
+      display: none;
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      width: 40px;
+      height: 40px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: #ccc;
+      font-size: 18px;
+      line-height: 40px;
+      text-align: center;
+      cursor: pointer;
+      z-index: 900;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    #fullscreen-btn:hover {
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
     }
 
     /* Audio hint — shown when AudioContext is suspended */
@@ -206,15 +310,24 @@
       </div>
     </div>
 
+    <!-- Click-to-start overlay (shown after WASM loads, captures audio context) -->
+    <div id="start-overlay">
+      <h2>Click to Start</h2>
+      <p>This also enables audio playback</p>
+    </div>
+
     <!-- Error display -->
     <div id="error-overlay">
       <h1>SM64CoopDX</h1>
       <p id="error-text">An error occurred.</p>
-      <button id="rom-upload-btn-retry" onclick="location.reload()">Reload</button>
+      <button class="btn-secondary" onclick="location.reload()">Reload</button>
     </div>
 
     <!-- Game canvas (hidden until the game engine initializes it) -->
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <!-- Fullscreen toggle button (shown during gameplay) -->
+    <button id="fullscreen-btn" title="Toggle fullscreen">&#x26F6;</button>
 
     <!-- Audio hint — shown after game starts if AudioContext is still suspended -->
     <div id="audio-hint">Click or press any key to enable audio</div>
@@ -282,26 +395,76 @@
        *
        * At this point, the game's main() is about to be called. The ROM
        * file picker (triggered from C via EM_ASM) will appear if needed.
-       * We hide the loading overlay and show the canvas.
+       * We hide the loading overlay, show the canvas + "Click to Start"
+       * overlay, and wait for user interaction to resume audio.
        */
       onRuntimeInitialized: function() {
         document.getElementById('loading-overlay').style.display = 'none';
         var canvas = document.getElementById('canvas');
+        var startOverlay = document.getElementById('start-overlay');
+        var fullscreenBtn = document.getElementById('fullscreen-btn');
+
+        /* Set default canvas size to 960x720 (4:3 aspect ratio).
+         * The game engine will resize it as needed once rendering starts.
+         * This provides a reasonable initial size before the first frame. */
+        canvas.width = 960;
+        canvas.height = 720;
         canvas.style.display = 'block';
 
-        /* Size the canvas to fill the viewport */
-        function resizeCanvas() {
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+        /* Show the "Click to Start" overlay on top of the canvas.
+         * This satisfies browser autoplay policy by capturing a user
+         * gesture before resuming the AudioContext. */
+        startOverlay.style.display = 'flex';
 
-        /* Give the canvas keyboard focus so SDL receives key events.
-         * tabindex="-1" allows programmatic focus but prevents Tab-key
-         * navigation to the canvas during the ROM upload flow. */
-        canvas.focus();
-        console.log('[Web Input] Canvas focused for keyboard events');
+        function onStartClick() {
+          startOverlay.style.display = 'none';
+
+          /* Resume AudioContext if suspended (browser autoplay policy) */
+          var ctx = null;
+          if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {
+            ctx = SDL2.audioContext;
+          } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {
+            ctx = Module.SDL2.audioContext;
+          }
+          if (ctx && ctx.state === 'suspended') {
+            ctx.resume().then(function() {
+              console.log('[Web Audio] AudioContext resumed via Click to Start');
+            }).catch(function(err) {
+              console.warn('[Web Audio] AudioContext resume failed:', err);
+            });
+          }
+
+          /* Give the canvas keyboard focus so SDL receives key events.
+           * tabindex="-1" allows programmatic focus but prevents Tab-key
+           * navigation to the canvas during the ROM upload flow. */
+          canvas.focus();
+          console.log('[Web Input] Canvas focused for keyboard events');
+
+          /* Show fullscreen button now that game is active */
+          if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+            fullscreenBtn.style.display = 'block';
+          }
+
+          /* Size the canvas to fill the viewport for gameplay */
+          function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+          }
+          window.addEventListener('resize', resizeCanvas);
+          resizeCanvas();
+
+          /* Remove the start overlay click handler */
+          startOverlay.removeEventListener('click', onStartClick);
+        }
+
+        startOverlay.addEventListener('click', onStartClick);
+
+        /* Also handle keypress to start (for keyboard-only users) */
+        function onStartKey(e) {
+          onStartClick();
+          window.removeEventListener('keydown', onStartKey);
+        }
+        window.addEventListener('keydown', onStartKey);
 
         /* Re-focus the canvas on click — in case the user clicks outside
          * and then back on the canvas, or after browser UI steals focus. */
@@ -363,7 +526,8 @@
           }
         });
 
-        /* Show audio hint if AudioContext is suspended (autoplay policy).
+        /* Show audio hint if AudioContext is still suspended after the
+         * Click to Start interaction (e.g., if AudioContext wasn't created yet).
          * The hint is hidden by audio_web.h's _sm64_onInteraction handler
          * or by the poll below once audio starts running. */
         setTimeout(function checkAudioHint() {
@@ -406,6 +570,52 @@
 
     /* When status is set before the overlays exist, queue it */
     Module.setStatus('Downloading...');
+
+    /**
+     * Fullscreen toggle — uses HTML5 Fullscreen API.
+     *
+     * The game's C code (gfx_sdl2.c) disables SDL fullscreen on Emscripten
+     * because SDL_WINDOW_FULLSCREEN_DESKTOP doesn't map properly to browser
+     * fullscreen. Instead, we use the standard Fullscreen API from JavaScript.
+     *
+     * Safari on iPhone does NOT support the Fullscreen API at all.
+     * Safari on iPad supports it via the webkit prefix.
+     */
+    (function setupFullscreen() {
+      var btn = document.getElementById('fullscreen-btn');
+      var container = document.getElementById('container');
+
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation(); /* Don't trigger canvas click-to-focus */
+        if (document.fullscreenElement || document.webkitFullscreenElement) {
+          /* Exit fullscreen */
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+          }
+        } else {
+          /* Enter fullscreen on the container (includes canvas + UI overlays) */
+          if (container.requestFullscreen) {
+            container.requestFullscreen();
+          } else if (container.webkitRequestFullscreen) {
+            container.webkitRequestFullscreen();
+          }
+        }
+        /* Re-focus canvas after fullscreen toggle */
+        document.getElementById('canvas').focus();
+      });
+
+      /* Update button icon based on fullscreen state */
+      function onFullscreenChange() {
+        var isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        btn.innerHTML = isFS ? '&#x2716;' : '&#x26F6;';
+        btn.title = isFS ? 'Exit fullscreen' : 'Toggle fullscreen';
+        console.log('[Web UI] Fullscreen:', isFS ? 'entered' : 'exited');
+      }
+      document.addEventListener('fullscreenchange', onFullscreenChange);
+      document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+    })();
 
     /**
      * WASM crash diagnostics — translates common RuntimeError messages
@@ -473,8 +683,10 @@
 
       loadingOverlay.style.display = 'none';
       document.getElementById('rom-overlay').style.display = 'none';
+      document.getElementById('start-overlay').style.display = 'none';
       document.getElementById('canvas').style.display = 'none';
       document.getElementById('audio-hint').style.display = 'none';
+      document.getElementById('fullscreen-btn').style.display = 'none';
       errorOverlay.style.display = 'flex';
 
       var info = classifyCrashError(message, error);
