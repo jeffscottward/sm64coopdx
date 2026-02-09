@@ -296,15 +296,28 @@ static void gfx_sdl_handle_events(void) {
                 gfx_sdl_onkeyup(event.key.keysym.scancode);
                 break;
             case SDL_MOUSEWHEEL:
+#if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(__EMSCRIPTEN__)
+                /* SDL 2.0.18+ provides sub-pixel precision via preciseX/Y.
+                   Emscripten's SDL2 port may not have these fields — use
+                   integer x/y which the port reliably provides from the
+                   browser's wheel event deltaX/deltaY. */
                 gfx_sdl_onscroll(event.wheel.preciseX, event.wheel.preciseY);
+#else
+                gfx_sdl_onscroll((float)event.wheel.x, (float)event.wheel.y);
+#endif
                 break;
             case SDL_WINDOWEVENT:
 #ifdef __EMSCRIPTEN__
-                /* In browsers, only track canvas size changes. Window
-                   position and fullscreen state are managed by the browser. */
+                /* In browsers, track canvas size changes and focus loss.
+                   Window position and fullscreen are managed by the browser. */
                 if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                     configWindow.w = event.window.data1;
                     configWindow.h = event.window.data2;
+                } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    /* Release all held keys when the browser tab/window
+                       loses focus. Without this, keys remain "stuck" because
+                       keyup events fire while the canvas is not focused. */
+                    if (kb_all_keys_up) kb_all_keys_up();
                 }
 #else
                 if (!IS_FULLSCREEN()) {

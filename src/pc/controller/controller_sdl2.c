@@ -145,6 +145,15 @@ static void controller_sdl_init(void) {
 
     init_ok = true;
     mouse_init_ok = true;
+
+#ifdef __EMSCRIPTEN__
+    printf("[Web Input] SDL2 controller backend initialized\n");
+    printf("[Web Input]   Gamepad:  SDL_GameController via browser Gamepad API\n");
+    printf("[Web Input]   Keyboard: SDL scancode -> Windows scancode translation\n");
+    printf("[Web Input]   Mouse:    SDL_GetRelativeMouseState, pointer lock via SDL_SetRelativeMouseMode\n");
+    printf("[Web Input]   Haptics:  Disabled (not available in browsers)\n");
+    printf("[Web Input]   Note: Gamepads only detected after first button press (browser security)\n");
+#endif
 }
 
 #ifndef __EMSCRIPTEN__

@@ -287,6 +287,72 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
+        /* Give the canvas keyboard focus so SDL receives key events.
+         * tabindex="-1" allows programmatic focus but prevents Tab-key
+         * navigation to the canvas during the ROM upload flow. */
+        canvas.focus();
+        console.log('[Web Input] Canvas focused for keyboard events');
+
+        /* Re-focus the canvas on click — in case the user clicks outside
+         * and then back on the canvas, or after browser UI steals focus. */
+        canvas.addEventListener('click', function() {
+          canvas.focus();
+        });
+
+        /* Release all keys when the window/tab loses focus.
+         * Without this, keys held during a tab switch stay "stuck" because
+         * the keyup events fire while the tab is not focused. Emscripten's
+         * SDL2 port may not relay visibilitychange to SDL_WINDOWEVENT_FOCUS_LOST
+         * reliably, so we handle it from JavaScript. */
+        document.addEventListener('visibilitychange', function() {
+          if (document.hidden && Module._keyboard_on_all_keys_up) {
+            Module._keyboard_on_all_keys_up();
+            console.log('[Web Input] Tab hidden — released all keys');
+          }
+        });
+        window.addEventListener('blur', function() {
+          if (Module._keyboard_on_all_keys_up) {
+            Module._keyboard_on_all_keys_up();
+            console.log('[Web Input] Window blurred — released all keys');
+          }
+        });
+
+        /* Pointer lock note:
+         * SDL_SetRelativeMouseMode(SDL_TRUE) in Emscripten's SDL2 port maps
+         * to requestPointerLock(). The port internally defers the request
+         * until the next user click event, which satisfies the browser's
+         * user-gesture requirement. No additional JS-side pointer lock
+         * management is needed — SDL handles the click-to-lock flow.
+         *
+         * The game's controller_sdl_read() calls enter_relative/leave_relative
+         * based on camera mode, pause state, and DJUI state. SDL's deferred
+         * pointer lock will activate on the user's next click after the game
+         * requests it. */
+
+        /* Log pointer lock state changes for debugging */
+        document.addEventListener('pointerlockchange', function() {
+          if (document.pointerLockElement === canvas) {
+            console.log('[Web Input] Pointer lock acquired');
+          } else {
+            console.log('[Web Input] Pointer lock released');
+          }
+        });
+
+        /* Prevent browser default key actions that interfere with gameplay.
+         * Arrow keys and Space scroll the page, Tab changes focus, Backspace
+         * navigates back. These must be suppressed when the canvas has focus
+         * so the game receives the events cleanly via SDL's event loop. */
+        var gameKeys = {
+          'ArrowUp': true, 'ArrowDown': true, 'ArrowLeft': true, 'ArrowRight': true,
+          'Space': true, 'Tab': true, 'Backspace': true,
+          'F1': true, 'F2': true, 'F3': true, 'F4': true, 'F5': true
+        };
+        window.addEventListener('keydown', function(e) {
+          if (document.activeElement === canvas && gameKeys[e.code]) {
+            e.preventDefault();
+          }
+        });
+
         /* Show audio hint if AudioContext is suspended (autoplay policy).
          * The hint is hidden by audio_web.h's _sm64_onInteraction handler
          * or by the poll below once audio starts running. */

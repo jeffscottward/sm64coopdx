@@ -88,6 +88,7 @@ WEB_LDFLAGS := \
 	$(EM_PORT_FLAGS) \
 	$(EM_THREAD_FLAGS) \
 	-s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
+	-s EXPORTED_FUNCTIONS='["_main","_keyboard_on_all_keys_up"]' \
 	-s FORCE_FILESYSTEM=1 \
 	-s ASYNCIFY \
 	-s ASYNCIFY_STACK_SIZE=65536 \
