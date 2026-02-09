@@ -39,6 +39,10 @@
 #include "pc/gfx/gfx_screen_config.h"
 #include "pc/gfx/gfx_window_manager_api.h"
 
+#ifdef __EMSCRIPTEN__
+#include "pc/gfx/gfx_web_util.h"
+#endif
+
 // this is used for multi-textures
 // and it's quite a hack... instead of allowing 8 tiles, we basically only allow 2
 #define G_TX_LOADTILE_6_UNKNOWN 6
@@ -1986,6 +1990,12 @@ void gfx_init(struct GfxWindowManagerAPI *wapi, struct GfxRenderingAPI *rapi, co
 
     gfx_cc_precomp();
 
+#ifdef __EMSCRIPTEN__
+    /* Register WebGL context loss/restore handlers so the game can skip
+       rendering while the context is unavailable (e.g. on mobile tab switch). */
+    gfx_web_register_context_handlers("#canvas");
+#endif
+
     gGfxInited = true;
 }
 
@@ -2019,7 +2029,15 @@ void gfx_run(Gfx *commands) {
 
     sHasInverseCameraMatrix = false;
 
-    //puts("New frame");
+#ifdef __EMSCRIPTEN__
+    /* Skip rendering while WebGL context is lost (e.g. mobile tab switch). */
+    if (gfx_web_is_context_lost()) {
+        dropped_frame = true;
+        return;
+    }
+    /* Sync canvas drawing-buffer size with CSS layout size for HiDPI. */
+    gfx_web_sync_canvas_size("#canvas");
+#endif
 
     if (!gfx_wapi->start_frame()) {
         dropped_frame = true;

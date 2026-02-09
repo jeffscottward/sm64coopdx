@@ -30,6 +30,13 @@
  */
 static volatile int sSyncInitDone = 0;
 
+/*
+ * Guard flag to prevent concurrent FS.syncfs() calls.
+ * Emscripten warns "2 FS.syncfs operations in flight at once" when
+ * two syncs overlap — this flag prevents that race.
+ */
+static volatile int sSyncInFlight = 0;
+
 /**
  * Initialize IDBFS persistent storage.
  *
@@ -92,13 +99,22 @@ void web_storage_init(void) {
  * sync happens asynchronously. Any errors are logged to the console.
  */
 void web_storage_save(void) {
+    if (sSyncInFlight) {
+        /* A sync is already in progress — skip to avoid the Emscripten
+           "2 FS.syncfs operations in flight at once" warning. */
+        return;
+    }
+    sSyncInFlight = 1;
+
     EM_ASM({
+        var guardPtr = $0;
         FS.syncfs(false, function(err) {
             if (err) {
                 console.error('web_storage: Failed to persist to IndexedDB:', err);
             }
+            setValue(guardPtr, 0, 'i32');
         });
-    });
+    }, &sSyncInFlight);
 }
 
 #endif /* TARGET_WEB */

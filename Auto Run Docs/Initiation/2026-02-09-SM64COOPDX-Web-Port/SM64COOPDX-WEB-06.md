@@ -20,7 +20,7 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   - Document the server command in the build script
   > **Completed**: Created `serve_web.py` with COOP/COEP headers, `Cache-Control: no-cache`, CLI args (`--port`, `--dir`), build directory validation, and helpful error messages. Updated `Makefile.web` header comments and post-build output to reference `serve_web.py`. Verified headers served correctly via curl test.
 
-- [ ] Debug and fix WebGL rendering issues:
+- [x] Debug and fix WebGL rendering issues:
   - Open the game in Chrome with DevTools Console open
   - Common WebGL issues to look for and fix:
     - "WebGL: INVALID_ENUM" — usually from `GL_QUADS` or unsupported texture formats
@@ -31,6 +31,11 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   - Use `chrome://gpu` to verify WebGL2 is enabled
   - Add temporary debug logging in `gfx_opengl.c` functions to trace rendering calls
   - Check that texture upload and sampling work correctly (N64 textures are small, so memory shouldn't be an issue)
+  > **Completed**: Thorough audit of the WebGL rendering pipeline confirmed the existing code is already well-designed for WebGL 1.0/GLES 2.0 compatibility — no `GL_QUADS`, no `glBegin`/`glEnd`, uses `GL_CLAMP_TO_EDGE`, correct `#version 100` shaders with `precision mediump float`, properly guarded VAO creation, and triangle-based rendering throughout. Changes made:
+  > 1. **Integrated `gfx_web_util.h`** into `gfx_pc.c` — registered WebGL context loss/restore handlers in `gfx_init()`, added context loss skip in `gfx_run()`, and canvas size sync for HiDPI in the render loop.
+  > 2. **Added WebGL debug logging** to `gfx_opengl.c` — `GL_CHECK()` macro (active with `-DGFX_WEB_DEBUG`), WebGL context info logging on init (version/renderer/vendor/GLSL version), and shader source dumping on compilation failure for browser DevTools debugging.
+  > 3. **Fixed IDBFS double-sync race** in `web_storage.c` — added `sSyncInFlight` guard to prevent concurrent `FS.syncfs()` calls, eliminating the "2 FS.syncfs operations in flight at once" warning.
+  > 4. Build verified clean with all 3 modified files recompiled and linked successfully.
 
 - [ ] Debug and fix audio playback:
   - Verify SDL_audio initializes correctly (check console for "SDL audio" related messages)

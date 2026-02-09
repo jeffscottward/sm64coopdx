@@ -50,6 +50,33 @@
 #include "gfx_rendering_api.h"
 #include "gfx_pc.h"
 
+#include <stdio.h>
+
+#ifdef __EMSCRIPTEN__
+/* WebGL debug helper: check for GL errors and log them to console.
+   Only active when GFX_WEB_DEBUG is defined (e.g. via -DGFX_WEB_DEBUG). */
+#ifdef GFX_WEB_DEBUG
+static void gfx_web_check_gl_error(const char *context) {
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        const char *errstr = "UNKNOWN";
+        switch (err) {
+            case GL_INVALID_ENUM:      errstr = "INVALID_ENUM"; break;
+            case GL_INVALID_VALUE:     errstr = "INVALID_VALUE"; break;
+            case GL_INVALID_OPERATION: errstr = "INVALID_OPERATION"; break;
+            case GL_OUT_OF_MEMORY:     errstr = "OUT_OF_MEMORY"; break;
+        }
+        fprintf(stderr, "WebGL error [%s]: %s (0x%x)\n", context, errstr, err);
+    }
+}
+#define GL_CHECK(ctx) gfx_web_check_gl_error(ctx)
+#else
+#define GL_CHECK(ctx) ((void)0)
+#endif /* GFX_WEB_DEBUG */
+#else
+#define GL_CHECK(ctx) ((void)0)
+#endif /* __EMSCRIPTEN__ */
+
 #define TEX_CACHE_STEP 512
 
 struct ShaderProgram {
@@ -473,6 +500,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(struct ColorC
         fprintf(stderr, "Vertex shader compilation failed\n");
         glGetShaderInfoLog(vertex_shader, max_length, &max_length, &error_log[0]);
         fprintf(stderr, "%s\n", &error_log[0]);
+#ifdef __EMSCRIPTEN__
+        fprintf(stderr, "--- Vertex shader source ---\n%s\n--- End shader source ---\n", vs_buf);
+#endif
         sys_fatal("vertex shader compilation failed (see terminal)");
     }
 
@@ -487,6 +517,9 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(struct ColorC
         fprintf(stderr, "Fragment shader compilation failed\n");
         glGetShaderInfoLog(fragment_shader, max_length, &max_length, &error_log[0]);
         fprintf(stderr, "%s\n", &error_log[0]);
+#ifdef __EMSCRIPTEN__
+        fprintf(stderr, "--- Fragment shader source ---\n%s\n--- End shader source ---\n", fs_buf);
+#endif
         sys_fatal("fragment shader compilation failed (see terminal)");
     }
 
@@ -677,7 +710,9 @@ static void gfx_opengl_set_use_alpha(bool use_alpha) {
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     //printf("flushing %d tris\n", buf_vbo_num_tris);
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
+    GL_CHECK("glBufferData");
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    GL_CHECK("glDrawArrays");
 }
 
 static inline bool gl_get_version(int *major, int *minor, bool *is_es) {
@@ -702,12 +737,28 @@ static void gfx_opengl_init(void) {
         sys_fatal("could not init GLEW:\n%s", glewGetErrorString(err));
 #endif
 
+#ifdef __EMSCRIPTEN__
+    /* Log WebGL context info for debugging. */
+    {
+        const char *gl_version = (const char *)glGetString(GL_VERSION);
+        const char *gl_renderer = (const char *)glGetString(GL_RENDERER);
+        const char *gl_vendor = (const char *)glGetString(GL_VENDOR);
+        const char *gl_slver = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
+        printf("WebGL init: version=%s renderer=%s vendor=%s glsl=%s\n",
+               gl_version ? gl_version : "(null)",
+               gl_renderer ? gl_renderer : "(null)",
+               gl_vendor ? gl_vendor : "(null)",
+               gl_slver ? gl_slver : "(null)");
+    }
+#endif
+
     tex_cache_size = TEX_CACHE_STEP;
     tex_cache = calloc(tex_cache_size, sizeof(struct GLTexture));
     if (!tex_cache) sys_fatal("out of memory allocating texture cache");
 
     glGenBuffers(1, &opengl_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
+    GL_CHECK("gfx_opengl_init:VBO");
 
 #ifndef __EMSCRIPTEN__
     // Check GL version and optionally create VAO (not needed on WebGL)
