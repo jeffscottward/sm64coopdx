@@ -149,6 +149,28 @@
       max-width: 520px;
       line-height: 1.5;
     }
+
+    /* Audio hint — shown when AudioContext is suspended */
+    #audio-hint {
+      display: none;
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      z-index: 1000;
+      pointer-events: none;
+      animation: audio-hint-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes audio-hint-pulse {
+      0%, 100% { opacity: 0.8; }
+      50% { opacity: 1; }
+    }
   </style>
 </head>
 <body>
@@ -183,6 +205,9 @@
 
     <!-- Game canvas (hidden until the game engine initializes it) -->
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <!-- Audio hint — shown after game starts if AudioContext is still suspended -->
+    <div id="audio-hint">Click or press any key to enable audio</div>
   </div>
 
   <script>
@@ -261,6 +286,29 @@
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+
+        /* Show audio hint if AudioContext is suspended (autoplay policy).
+         * The hint is hidden by audio_web.h's _sm64_onInteraction handler
+         * or by the poll below once audio starts running. */
+        setTimeout(function checkAudioHint() {
+          var ctx = null;
+          if (typeof SDL2 !== 'undefined' && SDL2.audioContext) {
+            ctx = SDL2.audioContext;
+          } else if (typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext) {
+            ctx = Module.SDL2.audioContext;
+          }
+          var hint = document.getElementById('audio-hint');
+          if (ctx && ctx.state === 'suspended') {
+            hint.style.display = 'block';
+            /* Poll until audio starts */
+            var poll = setInterval(function() {
+              if (!ctx || ctx.state !== 'suspended') {
+                hint.style.display = 'none';
+                clearInterval(poll);
+              }
+            }, 500);
+          }
+        }, 1000);
       },
 
       /* Print stdout to browser console */

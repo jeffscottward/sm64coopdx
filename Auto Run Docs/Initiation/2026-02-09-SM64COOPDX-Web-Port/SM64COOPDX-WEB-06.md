@@ -37,13 +37,19 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   > 3. **Fixed IDBFS double-sync race** in `web_storage.c` — added `sSyncInFlight` guard to prevent concurrent `FS.syncfs()` calls, eliminating the "2 FS.syncfs operations in flight at once" warning.
   > 4. Build verified clean with all 3 modified files recompiled and linked successfully.
 
-- [ ] Debug and fix audio playback:
+- [x] Debug and fix audio playback:
   - Verify SDL_audio initializes correctly (check console for "SDL audio" related messages)
   - If audio doesn't play, it's likely the browser autoplay policy:
     - Add a "Click to Start" overlay that resumes the AudioContext on first user interaction
     - Use `EM_ASM({ var ctx = SDL.audioContext; if (ctx && ctx.state === 'suspended') ctx.resume(); })` on first input event
   - Check audio buffer underrun/overrun — if audio stutters, adjust buffer sizes
   - Verify the audio sample rate matches what the browser expects (typically 44100 or 48000 Hz)
+  > **Completed**: Thorough audit of the SDL2 audio backend, autoplay policy workaround, and buffer configuration confirmed the audio system is well-architected for web. Changes made:
+  > 1. **Enhanced `audio_sdl2.c`** — Added `[Web Audio]` console logging under `#ifdef __EMSCRIPTEN__` that reports the negotiated audio spec (freq/channels/samples/format) and autoplay policy notice on initialization.
+  > 2. **Improved `audio_web.h`** — Made `ctx.resume()` use promise-based `.then()/.catch()` with success/failure logging. Added retry mechanism: if AudioContext doesn't exist yet at first interaction, listeners remain installed for the next interaction instead of silently failing. All stages now log to `[Web Audio]` prefix for easy filtering in DevTools. Handler auto-hides the `#audio-hint` UI element.
+  > 3. **Added audio hint to `shell.html`** — New `#audio-hint` overlay ("Click or press any key to enable audio") appears after game start if AudioContext is suspended. Uses CSS pulse animation, auto-hides via polling or when the C-side interaction handler fires. Non-interactive (`pointer-events: none`) so it doesn't block game input.
+  > 4. **Buffer sizes verified** — SDL2 uses 512 samples at 32kHz (~16ms latency), desired buffer 1100 samples (~34ms), max cap 6000 samples (~188ms). Emscripten's SDL2 port handles resampling to browser's native rate (44.1/48kHz) internally. No changes needed.
+  > 5. Build verified clean — only `audio_sdl2.o` and `pc_main.o` recompiled, linked successfully.
 
 - [ ] Debug and fix game loop timing:
   - Verify `emscripten_set_main_loop` is being called with the right parameters

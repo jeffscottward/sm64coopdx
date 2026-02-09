@@ -25,6 +25,11 @@ static bool audio_sdl_init(void) {
         fprintf(stderr, "SDL_OpenAudio error: %s\n", SDL_GetError());
         return false;
     }
+#ifdef __EMSCRIPTEN__
+    printf("[Web Audio] SDL audio device opened: freq=%d, channels=%d, samples=%d, format=0x%04x\n",
+           have.freq, have.channels, have.samples, have.format);
+    printf("[Web Audio] Audio will start after first user interaction (browser autoplay policy)\n");
+#endif
     SDL_PauseAudioDevice(dev, 0);
     return true;
 }
