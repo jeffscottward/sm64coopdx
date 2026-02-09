@@ -30,7 +30,7 @@ This phase is the critical integration step where we attempt the first full Emsc
   > - **fork/exec/pipe**: Not used anywhere in src/
   > - **pthread.h** — NEW FIX: `smlua_audio_utils.c` had raw `#include <pthread.h>` and direct `pthread_mutex_lock/unlock` calls bypassing the thread.h abstraction. Added `#ifdef TARGET_WEB` guards with `SAMPLE_COPY_MUTEX_LOCK/UNLOCK` macros (no-ops on web, real mutex on native). Also removed `-s USE_PTHREADS=1 -pthread` and `PTHREAD_POOL_SIZE=4` from `Makefile.web` to match the single-threaded design (thread.c stubs). This avoids the SharedArrayBuffer/COOP/COEP server header requirement. miniaudio.h already has built-in `MA_EMSCRIPTEN` support with `NO_THREADING` mode. All 552+ source files still compile cleanly; only remaining issue is Lua linker errors (Task 4).
 
-- [ ] Fix linker errors from missing native libraries:
+- [x] Fix linker errors from missing native libraries:
   - `-lcurl` — remove for web builds (update checker already stubbed)
   - `-ldl` — Emscripten has a stub, should link. If not, remove for web
   - `-lpthread` — should work with `-s USE_PTHREADS=1`. If single-threaded, remove
@@ -42,6 +42,7 @@ This phase is the critical integration step where we attempt the first full Emsc
   - Lua library (`-l:liblua53.a`) — must compile Lua from source with Emscripten. Add a step to build `lib/lua/` with `emcc`. The Lua source is portable C and should compile cleanly
   - CoopNet and Discord libraries — already disabled via build flags, verify no stray references
   - Update `Makefile.web` with corrected linker flags
+  > **Completed 2026-02-09:** All native linker flags (`-lcurl`, `-ldl`, `-lpthread`, `-latomic`, `-lz`, `-rdynamic`, `-no-pie`, `-march=native`) are **already excluded** — Makefile.web passes LDFLAGS on the command line which overrides the main Makefile's `:=` and `+=` assignments completely. Emscripten ports handle zlib (`-s USE_ZLIB=1`), SDL2 (`-s USE_SDL=2`), and OpenGL ES (`-s FULL_ES2=1`). For Lua: downloaded Lua 5.3.5 source code (35 files), placed in `lib/lua/src/`, compiled 33 library files (excluding lua.c/luac.c which contain main()) with `emcc -O2 -DLUA_USE_POSIX`, archived with `emar rcs` into `lib/lua/web/liblua53.a`. Added `lua-web` target to Makefile.web as a prerequisite of `web`. CoopNet (COOPNET=0) and Discord (DISCORD_SDK=0) confirmed disabled. **Build now completes successfully** — produces sm64coopdx.html (9K), sm64coopdx.js (452K), sm64coopdx.wasm (62MB), sm64coopdx.data (205K).
 
 - [ ] Compile Lua 5.3 for Emscripten:
   - Read `lib/lua/include/` to understand the Lua version and header structure

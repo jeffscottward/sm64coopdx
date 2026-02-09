@@ -56,7 +56,26 @@ WEB_EXTRA_CFLAGS := \
 	$(EM_PORT_FLAGS) \
 	$(EM_THREAD_FLAGS)
 
+# Lua 5.3 compiled from source for Emscripten
+# The precompiled native .a files in lib/lua/linux/ etc. are x86/ARM — incompatible
+# with WASM. We compile Lua 5.3.5 source (in lib/lua/src/) with emcc and archive
+# with emar into lib/lua/web/liblua53.a.
+LUA_SRC_DIR   := lib/lua/src
+LUA_WEB_DIR   := lib/lua/web
+LUA_WEB_LIB   := $(LUA_WEB_DIR)/liblua53.a
+LUA_INC_DIR   := lib/lua/include
+
+# All Lua library source files (excluding lua.c and luac.c which contain main())
+LUA_SRC_FILES := $(filter-out $(LUA_SRC_DIR)/lua.c $(LUA_SRC_DIR)/luac.c, \
+	$(wildcard $(LUA_SRC_DIR)/*.c))
+LUA_OBJ_FILES := $(LUA_SRC_FILES:$(LUA_SRC_DIR)/%.c=$(LUA_WEB_DIR)/%.o)
+
 # Emscripten linker flags
+# Note: The command-line LDFLAGS override prevents the main Makefile from adding
+# native flags (-lcurl, -ldl, -lpthread, -latomic, -lz, -rdynamic, -no-pie,
+# -march=native, -l:liblua53.a). This is intentional — Emscripten ports provide
+# zlib (-s USE_ZLIB=1), SDL2 (-s USE_SDL=2), and OpenGL ES (-s FULL_ES2=1).
+# Native-only libraries (curl, pthread, dl, atomic) are not needed for web builds.
 WEB_LDFLAGS := \
 	-s WASM=1 \
 	-s ALLOW_MEMORY_GROWTH=1 \
@@ -70,7 +89,8 @@ WEB_LDFLAGS := \
 	--preload-file $(BUILD_DIR_WEB)/lang@/lang \
 	--preload-file $(BUILD_DIR_WEB)/dynos@/dynos \
 	--shell-file src/pc/web/shell.html \
-	-lidbfs.js
+	-lidbfs.js \
+	-L$(LUA_WEB_DIR) -l:liblua53.a
 
 # Variables passed to the main Makefile
 # Note: The main Makefile uses ?= for most options, so setting them via
@@ -105,10 +125,40 @@ MAKE_OVERRIDES := \
 # Targets                                                                      #
 #==============================================================================#
 
-.PHONY: web clean-web
+.PHONY: web clean-web lua-web clean-lua-web
 
-# Default target
-web:
+# Ensure 'web' is the default target (must be the first explicit rule)
+.DEFAULT_GOAL := web
+
+#==============================================================================#
+# Lua 5.3 for Emscripten                                                      #
+#==============================================================================#
+
+# Compile individual Lua .c files to .o with emcc
+$(LUA_WEB_DIR)/%.o: $(LUA_SRC_DIR)/%.c | $(LUA_WEB_DIR)
+	@echo "  [emcc] Lua: $<"
+	$(EMCC) -O2 -DLUA_USE_POSIX -I$(LUA_INC_DIR) -c $< -o $@
+
+# Create the Lua static library
+$(LUA_WEB_LIB): $(LUA_OBJ_FILES)
+	@echo "  [emar] Creating $@"
+	$(EMAR) rcs $@ $^
+
+$(LUA_WEB_DIR):
+	mkdir -p $(LUA_WEB_DIR)
+
+lua-web: $(LUA_WEB_LIB)
+	@echo "Lua 5.3 for Emscripten: $(LUA_WEB_LIB)"
+
+clean-lua-web:
+	rm -rf $(LUA_WEB_DIR)
+
+#==============================================================================#
+# Main Web Build                                                               #
+#==============================================================================#
+
+# Default target — depends on Lua being built first
+web: lua-web
 	@echo "=========================================="
 	@echo " Building sm64coopdx for WebAssembly"
 	@echo "=========================================="
@@ -140,7 +190,7 @@ web:
 	@echo "   Open http://localhost:8080/sm64coopdx.html"
 	@echo "=========================================="
 
-clean-web:
+clean-web: clean-lua-web
 	@echo "Cleaning web build artifacts..."
 	rm -rf $(BUILD_DIR_WEB)
 	@echo "Done."
