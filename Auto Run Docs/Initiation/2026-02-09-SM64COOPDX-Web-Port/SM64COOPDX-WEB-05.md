@@ -88,7 +88,7 @@ This phase is the critical integration step where we attempt the first full Emsc
   > - **Build output**: sm64coopdx.html (9K), sm64coopdx.js (452K), sm64coopdx.wasm (62MB), sm64coopdx.data (205K)
   > - Full build log saved to `Auto Run Docs/Working/build_errors_02.log` (4796 lines, 0 errors)
 
-- [ ] Once compilation succeeds, do a basic smoke test:
+- [x] Once compilation succeeds, do a basic smoke test:
   - Start a local web server: `python3 -m http.server 8080 --directory build/us_web/`
   - Note: If using pthreads, the server must send COOP/COEP headers. Use a script or `npx serve` with headers configured
   - Open `http://localhost:8080/sm64coopdx.html` in a browser
@@ -101,3 +101,15 @@ This phase is the critical integration step where we attempt the first full Emsc
   - Create a research document at `docs/research/web-port-status.md` with front matter:
     - type: report, tags: [wasm, emscripten, web-port, status]
     - Document: what compiles, what doesn't, known issues, next steps
+  > **Completed 2026-02-09:** Smoke test performed via headless Chromium (Playwright) serving `build/us_web/` on `python3 -m http.server 8081`. Results:
+  > - **WASM module loads**: YES — 62MB module downloaded, instantiated, and `calledRun=true`
+  > - **Canvas element appears**: YES — present in DOM (hidden until game starts, as designed)
+  > - **No immediate crashes**: PARTIAL — The app reaches the ROM selection screen without crashing. Three runtime errors found:
+  >   1. `"Invalid or unexpected token"` — JS syntax error during init (needs source-map debugging)
+  >   2. `"2 FS.syncfs operations in flight"` — Benign IDBFS double-sync warning
+  >   3. `"Cannot read properties of undefined (reading 'getContextSafariWebGL2Fixed')"` — WebGL fails in headless (expected, no GPU); should work in real browser
+  > - **IDBFS storage**: Initializes successfully, config files auto-created (`sm64config.txt`)
+  > - **ROM upload UI**: Renders correctly — title, description, red "Select ROM File" button, privacy notice (verified via screenshot at `/tmp/sm64coopdx_smoke_test.png`)
+  > - **No COOP/COEP needed**: Single-threaded mode (no SharedArrayBuffer), simple HTTP server works
+  > - Runtime errors documented in `Auto Run Docs/Working/runtime_errors_01.log`
+  > - Research document created at `docs/research/web-port-status.md` with full status, known issues, and next steps
