@@ -4,6 +4,7 @@
 #include "macros.h"
 #include "platform.h"
 #include "fs/fs.h"
+#include "pc/web/web_storage.h"
 
 u8* gOverrideEeprom = NULL;
 
@@ -164,6 +165,9 @@ s32 osEepromLongWrite(UNUSED OSMesgQueue *mq, u8 address, u8 *buffer, int nbytes
     }
     s32 ret = fwrite(content, 1, 512, fp) == 512 ? 0 : -1;
     fclose(fp);
+
+    // On web builds, flush the save file to IndexedDB for persistence.
+    if (ret == 0) { web_storage_save(); }
 
     return ret;
 }

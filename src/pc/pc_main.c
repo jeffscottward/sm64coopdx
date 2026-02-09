@@ -24,6 +24,7 @@
 #include "audio/audio_sdl.h"
 #include "audio/audio_null.h"
 #include "audio/audio_web.h"
+#include "pc/web/web_storage.h"
 
 #include "rom_assets.h"
 #include "rom_checker.h"
@@ -425,6 +426,10 @@ void audio_shutdown(void) {
 
 void game_deinit(void) {
     if (gGameInited) { configfile_save(configfile_name()); }
+    // Final flush of all persistent data to IndexedDB on web builds.
+    // configfile_save() above already triggers web_storage_save(), but this
+    // ensures any other pending writes are also persisted before exit.
+    web_storage_save();
     controller_shutdown();
     audio_custom_shutdown();
     audio_shutdown();
@@ -531,6 +536,10 @@ int main(int argc, char *argv[]) {
 #else
     fs_init(gCLIOpts.savePath[0] ? gCLIOpts.savePath : sys_user_path());
 #endif
+
+    // On web builds, mount IDBFS at the save directory and load persisted
+    // data (ROM, config, saves) from IndexedDB before anything reads them.
+    web_storage_init();
 
 #if !defined(RAPI_DUMMY) && !defined(WAPI_DUMMY)
     if (gCLIOpts.headless) {

@@ -22,6 +22,7 @@
 #include "game/save_file.h"
 #include "pc/network/network_player.h"
 #include "pc/pc_main.h"
+#include "pc/web/web_storage.h"
 
 #define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
@@ -895,4 +896,7 @@ void configfile_save(const char *filename) {
     }
 
     fclose(file);
+
+    // On web builds, flush the config file to IndexedDB for persistence.
+    web_storage_save();
 }

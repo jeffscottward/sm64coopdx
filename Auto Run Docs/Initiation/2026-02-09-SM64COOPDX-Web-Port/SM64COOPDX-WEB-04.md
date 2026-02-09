@@ -16,7 +16,7 @@ This phase implements the browser-based ROM loading workflow. Since SM64 ROM dis
   - Create the corresponding header `src/pc/web/web_rom_loader.h`
   > **Completed:** Created `web_rom_loader.h` (header with native stubs and Emscripten declarations) and `web_rom_loader.c` (implementation using EM_ASM for HTML5 File API, FileReader, FS.writeFile into VFS at `/save/baserom.us.z64`, with emscripten_sleep() polling for async bridging). Added `src/pc/web` to Makefile SRC_DIRS and `-sASYNCIFY` + `-sASYNCIFY_STACK_SIZE=65536` to Makefile.web linker flags. Guarded existing `web_thread.c` with `WEB_USE_STANDALONE_THREAD` to prevent duplicate symbols. Tests pass for both native and web-simulated builds.
 
-- [ ] Set up Emscripten IDBFS for persistent storage:
+- [x] Set up Emscripten IDBFS for persistent storage:
   - Create `src/pc/web/web_storage.c` with functions:
     - `void web_storage_init(void)` — mount IDBFS at the save directory, call `EM_ASM({ FS.syncfs(true, function(err) { ... }); })` to load persisted data
     - `void web_storage_save(void)` — call `EM_ASM({ FS.syncfs(false, function(err) { ... }); })` to persist data to IndexedDB
@@ -24,6 +24,7 @@ This phase implements the browser-based ROM loading workflow. Since SM64 ROM dis
   - Call `web_storage_save()` after the ROM is loaded and after any config/save file changes
   - The IDBFS mount point should match what `sys_user_path()` returns for web builds
   - Create the corresponding header `src/pc/web/web_storage.h`
+  > **Completed:** Created `web_storage.h` (header with `__EMSCRIPTEN__`-guarded declarations and native no-op stubs) and `web_storage.c` (implementation using `EM_ASM` to mount IDBFS at `/save` matching `WEB_USER_PATH`, with `FS.syncfs(true,...)` for init and `FS.syncfs(false,...)` for save). `web_storage_init()` uses `emscripten_sleep()` polling to wait for the initial IndexedDB-to-MEMFS sync to complete before returning. `web_storage_save()` is fire-and-forget async. Integration: `web_storage_init()` called in `pc_main.c` after `fs_init()` but before `configfile_load()`; `web_storage_save()` called at the end of `configfile_save()`, after successful `osEepromLongWrite()`, and as a final flush in `game_deinit()`. Tests pass for both native and web-simulated builds.
 
 - [ ] Integrate ROM loading into the game startup flow in `src/pc/pc_main.c`:
   - After `fs_init()` but before `main_rom_handler()`, add web-specific ROM loading logic:
