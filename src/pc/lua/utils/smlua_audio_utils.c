@@ -486,14 +486,22 @@ void audio_stream_set_volume(struct ModAudio* audio, f32 volume) {
 
 // MA calls the end callback from its audio thread
 // Use mutexes to be sure we don't try to delete the same memory at the same time
+#ifdef TARGET_WEB
+// Web build: single-threaded, no mutex needed. miniaudio callbacks run synchronously.
+#define SAMPLE_COPY_MUTEX_LOCK()   ((void)0)
+#define SAMPLE_COPY_MUTEX_UNLOCK() ((void)0)
+#else
 #include <pthread.h>
 static pthread_mutex_t sSampleCopyMutex = PTHREAD_MUTEX_INITIALIZER;
+#define SAMPLE_COPY_MUTEX_LOCK()   pthread_mutex_lock(&sSampleCopyMutex)
+#define SAMPLE_COPY_MUTEX_UNLOCK() pthread_mutex_unlock(&sSampleCopyMutex)
+#endif
 static struct ModAudioSampleCopies *sSampleCopyFreeTail = NULL;
 
 // Called whenever a sample copy finishes playback (called from the miniaudio thread)
 // removes the copy from its linked list, and adds it to the pending list
 static void audio_sample_copy_end_callback(void* userData, UNUSED ma_sound* sound) {
-    pthread_mutex_lock(&sSampleCopyMutex);
+    SAMPLE_COPY_MUTEX_LOCK();
 
     struct ModAudioSampleCopies *copy = userData;
     if (copy->next) { copy->next->prev = copy->prev; }
@@ -512,7 +520,7 @@ static void audio_sample_copy_end_callback(void* userData, UNUSED ma_sound* soun
     }
     sSampleCopyFreeTail = copy;
 
-    pthread_mutex_unlock(&sSampleCopyMutex);
+    SAMPLE_COPY_MUTEX_UNLOCK();
 }
 
 void audio_destroy_copies(struct ModAudioSampleCopies* node) {
@@ -528,18 +536,18 @@ void audio_destroy_copies(struct ModAudioSampleCopies* node) {
 // Frees all audio sample copies that are in the pending list
 void audio_sample_destroy_pending_copies(void) {
     if (sSampleCopyFreeTail) {
-        pthread_mutex_lock(&sSampleCopyMutex);
+        SAMPLE_COPY_MUTEX_LOCK();
         audio_destroy_copies(sSampleCopyFreeTail);
         sSampleCopyFreeTail = NULL;
-        pthread_mutex_unlock(&sSampleCopyMutex);
+        SAMPLE_COPY_MUTEX_UNLOCK();
     }
 }
 
 static void audio_sample_destroy_copies(struct ModAudio* audio) {
-    pthread_mutex_lock(&sSampleCopyMutex);
+    SAMPLE_COPY_MUTEX_LOCK();
     audio_destroy_copies(audio->sampleCopiesTail);
     audio->sampleCopiesTail = NULL;
-    pthread_mutex_unlock(&sSampleCopyMutex);
+    SAMPLE_COPY_MUTEX_UNLOCK();
 }
 
 struct ModAudio* audio_sample_load(const char* filename) {

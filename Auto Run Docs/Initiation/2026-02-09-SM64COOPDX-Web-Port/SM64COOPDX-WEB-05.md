@@ -12,7 +12,7 @@ This phase is the critical integration step where we attempt the first full Emsc
   - Fix the first batch of errors and document what was changed
   > **Completed 2026-02-09:** Installed Emscripten SDK 5.0.0 via emsdk. Required GNU Make 4.x+ (macOS ships 3.81 which doesn't support `!=` operator) — installed via `brew install make` (gmake 4.4.1). First build revealed 5 error categories: (1) build system issues (GNU Make suffix rule `tangle`, missing build directories), (2) missing `<float.h>` for `FLT_EPSILON`, (3) `EM_ASM` macro comma confusion in `audio_web.h`, (4) `LOADING_SCREEN_MUTEX` macro using `pthread_mutex_lock` directly instead of web-compatible abstractions, (5) `emcc -E -P` not recognizing `.h.in` extension. All fixed — 552 source files now compile cleanly. Only remaining issue is linker errors for Lua symbols (native `liblua53.a` incompatible with WASM, addressed by Task 4). Build errors log at `Auto Run Docs/Working/build_errors_01.log`.
 
-- [ ] Fix C/C++ standard library and POSIX compatibility issues:
+- [x] Fix C/C++ standard library and POSIX compatibility issues:
   - `<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>` — guard with `#ifndef TARGET_WEB` in all network source files
   - `<sys/mman.h>` (used by Mumble) — guard with `#ifndef TARGET_WEB`
   - `<dlfcn.h>` (`dlopen`, `dlsym`) — Emscripten has partial support. If used for dynamic loading (crash handler, loading screen), guard or stub
@@ -22,6 +22,13 @@ This phase is the critical integration step where we attempt the first full Emsc
   - `std::filesystem` in `rom_checker.cpp` — Emscripten supports it with `-s FORCE_FILESYSTEM=1`, but verify
   - `fork()`, `exec()`, `pipe()` — should not be used, but search and guard if found
   - Iterate: rebuild after each batch of fixes
+  > **Completed 2026-02-09:** Comprehensive audit of all POSIX/std library compatibility. Most items were already guarded from prior work:
+  > - **socket headers** (`socket_linux.h`): Already had `#ifdef TARGET_WEB` with minimal type stubs (prior commit)
+  > - **sys/mman.h** (`mumble.c`/`mumble.h`): Already wrapped in `#ifndef TARGET_WEB` with no-op inline stubs (prior commit)
+  > - **dlfcn.h, execinfo.h, signal.h** (`crash_handler.c`): Guarded by `#if (defined(_WIN32) || defined(__linux__))` — Emscripten defines `__unix__` but NOT `__linux__`, so crash handler is already excluded
+  > - **std::filesystem** (`rom_checker.cpp`): Already guarded with `#ifndef TARGET_WEB` and web-specific C file I/O implementation (prior commit)
+  > - **fork/exec/pipe**: Not used anywhere in src/
+  > - **pthread.h** — NEW FIX: `smlua_audio_utils.c` had raw `#include <pthread.h>` and direct `pthread_mutex_lock/unlock` calls bypassing the thread.h abstraction. Added `#ifdef TARGET_WEB` guards with `SAMPLE_COPY_MUTEX_LOCK/UNLOCK` macros (no-ops on web, real mutex on native). Also removed `-s USE_PTHREADS=1 -pthread` and `PTHREAD_POOL_SIZE=4` from `Makefile.web` to match the single-threaded design (thread.c stubs). This avoids the SharedArrayBuffer/COOP/COEP server header requirement. miniaudio.h already has built-in `MA_EMSCRIPTEN` support with `NO_THREADING` mode. All 552+ source files still compile cleanly; only remaining issue is Lua linker errors (Task 4).
 
 - [ ] Fix linker errors from missing native libraries:
   - `-lcurl` — remove for web builds (update checker already stubbed)

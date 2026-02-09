@@ -40,7 +40,10 @@ EMAR  := emar
 EM_PORT_FLAGS := -s USE_SDL=2 -s USE_ZLIB=1 -s FULL_ES2=1
 
 # Emscripten threading flags
-EM_THREAD_FLAGS := -s USE_PTHREADS=1 -pthread
+# Single-threaded mode: thread.c provides no-op stubs for web, so we do NOT
+# enable USE_PTHREADS. This avoids the SharedArrayBuffer requirement (which
+# needs COOP/COEP server headers and has limited browser support).
+EM_THREAD_FLAGS :=
 
 # Extra C flags for web builds
 # Include -Wno-format-security -Wno-trigraphs from the main Makefile since
@@ -60,7 +63,6 @@ WEB_LDFLAGS := \
 	-s TOTAL_MEMORY=256MB \
 	$(EM_PORT_FLAGS) \
 	$(EM_THREAD_FLAGS) \
-	-s PTHREAD_POOL_SIZE=4 \
 	-s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
 	-s FORCE_FILESYSTEM=1 \
 	-s ASYNCIFY \
