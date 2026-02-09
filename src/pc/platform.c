@@ -5,7 +5,9 @@
 #include <string.h>
 #include <ctype.h>
 
-#if defined(_WIN32)
+#ifdef TARGET_WEB
+#include "web/web_compat.h"
+#elif defined(_WIN32)
 #include <windows.h>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -87,7 +89,40 @@ void sys_fatal(const char *fmt, ...) {
     sys_fatal_impl(msg);
 }
 
-#ifdef _WIN32
+#ifdef TARGET_WEB
+
+/*
+ * Web/Emscripten platform implementations.
+ * All paths point to locations in Emscripten's virtual filesystem (MEMFS/IDBFS).
+ * sys_user_path() returns "/save" which should be mounted as IDBFS for persistence.
+ */
+
+const char *sys_user_path(void) {
+    return WEB_USER_PATH;
+}
+
+const char *sys_resource_path(void) {
+    return WEB_RESOURCE_PATH;
+}
+
+const char *sys_exe_path_dir(void) {
+    return WEB_EXE_PATH_DIR;
+}
+
+const char *sys_exe_path_file(void) {
+    return WEB_EXE_PATH_FILE;
+}
+
+static void sys_fatal_impl(const char *msg) {
+#ifdef __EMSCRIPTEN__
+    emscripten_log(EM_LOG_ERROR, "FATAL ERROR: %s", msg);
+#endif
+    fprintf(stderr, "FATAL ERROR:\n%s\n", msg);
+    fflush(stderr);
+    exit(1);
+}
+
+#elif defined(_WIN32)
 
 static bool sys_windows_pathname_is_portable(const wchar_t *name, size_t size)
 {

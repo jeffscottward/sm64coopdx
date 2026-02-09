@@ -120,12 +120,30 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   >
   > Verified: Both Emscripten and native code paths compile cleanly (tested with gcc syntax checks). The native path is completely unchanged — all Emscripten code is gated behind `__EMSCRIPTEN__` preprocessor guards.
 
-- [ ] Handle platform-specific code in `src/pc/platform.c` (or wherever `sys_user_path` etc. are implemented). Read the file and:
+- [x] Handle platform-specific code in `src/pc/platform.c` (or wherever `sys_user_path` etc. are implemented). Read the file and:
   - For `TARGET_WEB`, `sys_user_path()` should return `"/save"` or `"/user"` — a path in Emscripten's virtual filesystem that will be persisted via IndexedDB (IDBFS)
   - `sys_exe_path_dir()` should return `"/"`
   - `sys_resource_path()` should return `"/"`
   - Add `#ifdef TARGET_WEB` blocks for these overrides
   - Also check `src/pc/fs/fs.c` for any POSIX-specific filesystem calls that need web alternatives
+
+  > **Completed 2026-02-09:** Added `#ifdef TARGET_WEB` platform block to `src/pc/platform.c` and a web-specific directory creation guard to `src/pc/fs/fs.c`.
+  >
+  > **`src/pc/platform.c`** — Two changes:
+  > - **Include guard** (lines 8-9): Added `#ifdef TARGET_WEB` / `#include "web/web_compat.h"` as the first branch of the platform include chain, before `_WIN32`. This brings in the `WEB_*` path constants and Emscripten headers (when `__EMSCRIPTEN__` is also defined).
+  > - **Platform function block** (lines 92-123): Added full `#ifdef TARGET_WEB` block before `#elif defined(_WIN32)` containing:
+  >   - `sys_user_path()` → returns `WEB_USER_PATH` (`"/save"`) — will be backed by IDBFS for persistence
+  >   - `sys_resource_path()` → returns `WEB_RESOURCE_PATH` (`"/"`) — root of Emscripten VFS
+  >   - `sys_exe_path_dir()` → returns `WEB_EXE_PATH_DIR` (`"/"`)
+  >   - `sys_exe_path_file()` → returns `WEB_EXE_PATH_FILE` (`"/sm64coopdx"`)
+  >   - `sys_fatal_impl()` → logs via `emscripten_log()` (under `__EMSCRIPTEN__` guard), then `fprintf(stderr)` + `exit(1)`
+  > - Native platform implementations (Windows, SDL2, fallback) are completely unchanged — all web code is behind `#ifdef TARGET_WEB`.
+  >
+  > **`src/pc/fs/fs.c`** — One change:
+  > - **`fs_init()` web directory creation** (lines 55-61): Added `#ifdef TARGET_WEB` guard that calls `fs_sys_mkdir(fs_writepath)` if the directory doesn't exist. This is necessary because unlike native builds (where `sys_user_path()` returns an OS-managed directory that already exists), the web path `/save` won't exist in Emscripten's MEMFS until explicitly created.
+  > - All other POSIX filesystem operations in `fs.c` (`stat`, `opendir`/`readdir`/`closedir`, `mkdir`, `rmdir`) are fully supported by Emscripten's virtual filesystem — no changes needed.
+  >
+  > Verified: Isolated compilation tests pass — web path functions return correct values (`"/save"`, `"/"`, `"/sm64coopdx"`), and the `fs_init` web mkdir guard correctly creates missing directories.
 
 - [ ] Create a build verification script `build_web.sh` in the project root that:
   - Checks if `emsdk` is installed and activated (checks for `emcc` in PATH)

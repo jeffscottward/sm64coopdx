@@ -52,6 +52,14 @@ bool fs_init(const char *writepath) {
     printf("FS: writepath set to `%s`\n", fs_writepath);
 #endif
 
+    // On web builds, create the user directory in the virtual filesystem
+    // since it won't exist by default in MEMFS (unlike native OS paths).
+#ifdef TARGET_WEB
+    if (fs_writepath[0] != '\0' && !fs_sys_dir_exists(fs_writepath)) {
+        fs_sys_mkdir(fs_writepath);
+    }
+#endif
+
     // we shall not progress any further if the path is inaccessible
     if (('\0' == fs_writepath[0]) || !fs_sys_dir_exists(fs_writepath)) {
         sys_fatal("Could not access the User Preferences directory.");
