@@ -76,7 +76,7 @@ This phase implements multiplayer support for the web port by creating a new `Ne
   - All environment variables configurable: `WS_RELAY_PORT`, `WS_MAX_PLAYERS`, `WS_MAX_ROOMS`, `WS_MAX_CONNECTIONS`
   - All 39 tests pass
 
-- [ ] Integrate the WebSocket backend into the game's network selection UI:
+- [x] Integrate the WebSocket backend into the game's network selection UI:
   - Read `src/pc/djui/djui_panel.c` and related DJUI panel files to understand the host/join UI
   - For web builds, modify the network system selection:
     - Remove Socket and CoopNet options (they don't work in browsers)
@@ -85,6 +85,38 @@ This phase implements multiplayer support for the web port by creating a new `Ne
     - The "Join" option should connect to a room by entering a room code
   - Update `src/pc/djui/djui_panel_join_message.c` (or equivalent) to show a room code input field instead of IP:port
   - Update `src/pc/djui/djui_panel_host_message.c` (or equivalent) to display the room code after hosting
+
+  **Completion Notes (2026-02-09):**
+  - **Enhanced `src/pc/network/websocket/network_websocket.c`** — Added full JSON control message protocol support:
+    - Text message handler (`ws_handle_control_message`) parses relay responses: `hosted`, `joined`, `player_joined`, `player_left`, `room_closed`, `error`
+    - `ns_websocket_send_host_command()` — sends `{"type":"host"}` to create a room on the relay
+    - `ns_websocket_send_join_command(roomCode)` — sends `{"type":"join","roomCode":"..."}` to join an existing room
+    - `ns_websocket_set_pending_join(roomCode)` — queues a join command to fire after async WebSocket connection opens
+    - Pending host/join commands deferred to `ws_on_open` callback (WebSocket connection is async)
+    - Room code, client index, and connection state (`sInRoom`, `sWaitingForRoom`) tracked statically
+    - Relay errors displayed to user via `djui_panel_join_message_error()`
+    - Simple JSON parser (no library dependency) extracts string and integer values from relay messages
+  - **Updated `src/pc/network/websocket/network_websocket.h`** — Added public API declarations: `ns_websocket_send_host_command`, `ns_websocket_send_join_command`, `ns_websocket_get_room_code`, `ns_websocket_is_connected`, `ns_websocket_set_pending_join`
+  - **Modified `src/pc/djui/djui_panel_host.c`** — For `TARGET_WEB`:
+    - Replaced Socket/CoopNet network system dropdown with WebSocket relay info text
+    - Hides port/password input fields (creates hidden dummy inputbox to satisfy port validator reference)
+    - Host button forces `NS_WEBSOCKET` and goes directly to hosting (no port forwarding warning)
+    - Port validation and text change callbacks guarded with `#ifndef TARGET_WEB`
+  - **Modified `src/pc/djui/djui_panel_host_message.c`** — For `TARGET_WEB`:
+    - `djui_panel_do_host()` forces `configNetworkSystem = NS_WEBSOCKET` on web builds
+    - Host confirmation panel shows WebSocket-specific message instead of port forwarding instructions
+  - **Modified `src/pc/djui/djui_panel_join.c`** — For `TARGET_WEB`:
+    - Bypasses CoopNet Public/Private/Direct menu and goes directly to room code join panel
+  - **Modified `src/pc/djui/djui_panel_join_direct.c`** — For `TARGET_WEB`:
+    - Shows "Enter a room code to join" prompt instead of IP:port instructions
+    - Inputbox limited to 32 chars (room codes are 6 chars, alphanumeric)
+    - Join button sets pending join code, forces `NS_WEBSOCKET`, and initializes as client
+    - IP parsing functions guarded with `#ifndef TARGET_WEB` (not needed for room codes)
+  - **Added localization strings to `lang/English.ini`**:
+    - `[HOST] WEBSOCKET_INFO` — relay hosting info text for host panel
+    - `[HOST_MESSAGE] WARN_WEBSOCKET` — WebSocket host confirmation message
+    - `[JOIN] JOIN_WEBSOCKET` — room code join prompt
+  - Build verified: all 552+ source files compile and link successfully with emcc/em++
 
 - [ ] Handle the relay server URL configuration:
   - Add a config option `configWebSocketRelay` to `src/pc/configfile.c` for the relay server URL (default: `ws://localhost:8765`)

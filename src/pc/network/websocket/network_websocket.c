@@ -8,9 +8,11 @@
 #include "pc/configfile.h"
 #include "pc/debuglog.h"
 #include "pc/djui/djui.h"
+#include "pc/djui/djui_panel_join_message.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/websocket.h>
+#include <emscripten/emscripten.h>
 #endif
 
 #define WS_MSG_QUEUE_SIZE 128
@@ -28,6 +30,18 @@ static s64 sClientIds[MAX_PLAYERS] = { 0 };
 // Whether the connection is established and ready
 static bool sConnected = false;
 
+// Whether we have successfully joined/hosted a room
+static bool sInRoom = false;
+
+// Whether we are waiting for a host/join response
+static bool sWaitingForRoom = false;
+
+// Pending room code for join command (sent after WebSocket opens)
+static char sPendingJoinCode[32] = "";
+
+// Whether to send a host command after WebSocket opens
+static bool sPendingHost = false;
+
 // Incoming message queue
 struct WsMessage {
     u8 data[WS_MAX_MSG_SIZE];
@@ -43,17 +57,138 @@ static u16 sMsgQueueCount = 0;
 #ifdef __EMSCRIPTEN__
 static EMSCRIPTEN_WEBSOCKET_T sWebSocket = 0;
 
+// Simple JSON string value extractor (no dependency on a JSON library)
+// Finds "key":"value" in a JSON string and copies value to dest
+static bool ws_json_get_string(const char* json, const char* key, char* dest, size_t destLen) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\"", key);
+    const char* pos = strstr(json, search);
+    if (!pos) { return false; }
+    pos = strchr(pos + strlen(search), ':');
+    if (!pos) { return false; }
+    pos++;
+    while (*pos == ' ' || *pos == '\t') { pos++; }
+    if (*pos == '"') {
+        pos++;
+        size_t i = 0;
+        while (*pos && *pos != '"' && i < destLen - 1) {
+            dest[i++] = *pos++;
+        }
+        dest[i] = '\0';
+        return true;
+    }
+    return false;
+}
+
+// Extract integer value for "key":123
+static bool ws_json_get_int(const char* json, const char* key, int* dest) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\"", key);
+    const char* pos = strstr(json, search);
+    if (!pos) { return false; }
+    pos = strchr(pos + strlen(search), ':');
+    if (!pos) { return false; }
+    pos++;
+    while (*pos == ' ' || *pos == '\t') { pos++; }
+    if (*pos >= '0' && *pos <= '9') {
+        *dest = atoi(pos);
+        return true;
+    }
+    return false;
+}
+
+static void ws_handle_control_message(const char* json) {
+    char msgType[32] = "";
+    if (!ws_json_get_string(json, "type", msgType, sizeof(msgType))) {
+        LOG_ERROR("WebSocket: could not parse control message type");
+        return;
+    }
+
+    if (strcmp(msgType, "hosted") == 0) {
+        // Room created successfully — extract room code and client index
+        ws_json_get_string(json, "roomCode", sRoomCode, sizeof(sRoomCode));
+        int idx = 0;
+        if (ws_json_get_int(json, "clientIndex", &idx)) {
+            sLocalClientIndex = (u8)idx;
+        }
+        sInRoom = true;
+        sWaitingForRoom = false;
+        LOG_INFO("WebSocket: hosted room %s (clientIndex=%d)", sRoomCode, sLocalClientIndex);
+
+    } else if (strcmp(msgType, "joined") == 0) {
+        // Joined room successfully
+        ws_json_get_string(json, "roomCode", sRoomCode, sizeof(sRoomCode));
+        int idx = 0;
+        if (ws_json_get_int(json, "clientIndex", &idx)) {
+            sLocalClientIndex = (u8)idx;
+        }
+        sInRoom = true;
+        sWaitingForRoom = false;
+        LOG_INFO("WebSocket: joined room %s (clientIndex=%d)", sRoomCode, sLocalClientIndex);
+
+    } else if (strcmp(msgType, "player_joined") == 0) {
+        int idx = 0;
+        if (ws_json_get_int(json, "clientIndex", &idx)) {
+            LOG_INFO("WebSocket: player joined (clientIndex=%d)", idx);
+        }
+
+    } else if (strcmp(msgType, "player_left") == 0) {
+        int idx = 0;
+        if (ws_json_get_int(json, "clientIndex", &idx)) {
+            LOG_INFO("WebSocket: player left (clientIndex=%d)", idx);
+        }
+
+    } else if (strcmp(msgType, "room_closed") == 0) {
+        char reason[64] = "";
+        ws_json_get_string(json, "reason", reason, sizeof(reason));
+        LOG_INFO("WebSocket: room closed (%s)", reason);
+        sInRoom = false;
+        memset(sRoomCode, 0, sizeof(sRoomCode));
+
+    } else if (strcmp(msgType, "error") == 0) {
+        char errorMsg[128] = "";
+        ws_json_get_string(json, "message", errorMsg, sizeof(errorMsg));
+        LOG_ERROR("WebSocket relay error: %s", errorMsg);
+        sWaitingForRoom = false;
+        // Show error in join message panel
+        char displayMsg[192];
+        snprintf(displayMsg, sizeof(displayMsg), "Relay error: %s", errorMsg);
+        djui_panel_join_message_error(displayMsg);
+
+    } else {
+        LOG_INFO("WebSocket: unknown control message type '%s'", msgType);
+    }
+}
+
 static EM_BOOL ws_on_open(int eventType, const EmscriptenWebSocketOpenEvent* wsEvent, void* userData) {
     (void)eventType; (void)wsEvent; (void)userData;
     sConnected = true;
     LOG_INFO("WebSocket connection opened");
+
+    // If we have a pending host or join command, send it now
+    if (sPendingHost) {
+        sPendingHost = false;
+        ns_websocket_send_host_command();
+    } else if (sPendingJoinCode[0] != '\0') {
+        char code[32];
+        snprintf(code, sizeof(code), "%s", sPendingJoinCode);
+        memset(sPendingJoinCode, 0, sizeof(sPendingJoinCode));
+        ns_websocket_send_join_command(code);
+    }
+
     return EM_TRUE;
 }
 
 static EM_BOOL ws_on_message(int eventType, const EmscriptenWebSocketMessageEvent* wsEvent, void* userData) {
     (void)eventType; (void)userData;
 
-    // Only handle binary messages
+    // Text messages are JSON control messages from the relay
+    if (wsEvent->isText && wsEvent->numBytes > 0) {
+        ws_handle_control_message((const char*)wsEvent->data);
+        return EM_TRUE;
+    }
+
+    // Binary messages are game data
     if (!wsEvent->isText && wsEvent->numBytes > 0) {
         if (sMsgQueueCount >= WS_MSG_QUEUE_SIZE) {
             LOG_ERROR("WebSocket message queue full, dropping packet");
@@ -91,21 +226,66 @@ static EM_BOOL ws_on_close(int eventType, const EmscriptenWebSocketCloseEvent* w
     (void)eventType; (void)wsEvent; (void)userData;
     LOG_INFO("WebSocket connection closed");
     sConnected = false;
+    sInRoom = false;
     sWebSocket = 0;
     return EM_TRUE;
 }
 #endif /* __EMSCRIPTEN__ */
 
+void ns_websocket_send_host_command(void) {
+#ifdef __EMSCRIPTEN__
+    if (!sConnected || sWebSocket <= 0) {
+        LOG_ERROR("WebSocket: cannot send host command, not connected");
+        return;
+    }
+    const char* cmd = "{\"type\":\"host\"}";
+    emscripten_websocket_send_utf8_text(sWebSocket, cmd);
+    sWaitingForRoom = true;
+    LOG_INFO("WebSocket: sent host command");
+#endif
+}
+
+void ns_websocket_send_join_command(const char* roomCode) {
+#ifdef __EMSCRIPTEN__
+    if (!sConnected || sWebSocket <= 0) {
+        LOG_ERROR("WebSocket: cannot send join command, not connected");
+        return;
+    }
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "{\"type\":\"join\",\"roomCode\":\"%s\"}", roomCode);
+    emscripten_websocket_send_utf8_text(sWebSocket, cmd);
+    sWaitingForRoom = true;
+    LOG_INFO("WebSocket: sent join command for room %s", roomCode);
+#endif
+}
+
+const char* ns_websocket_get_room_code(void) {
+    return sRoomCode;
+}
+
+bool ns_websocket_is_connected(void) {
+    return sConnected;
+}
+
+void ns_websocket_set_pending_join(const char* roomCode) {
+    snprintf(sPendingJoinCode, sizeof(sPendingJoinCode), "%s", roomCode);
+    sPendingHost = false;
+}
+
 static bool ns_websocket_initialize(enum NetworkType networkType, UNUSED bool reconnecting) {
 #ifdef __EMSCRIPTEN__
     // Reset state
     sConnected = false;
+    sInRoom = false;
+    sWaitingForRoom = false;
     sMsgQueueHead = 0;
     sMsgQueueTail = 0;
     sMsgQueueCount = 0;
     sLocalClientIndex = 0;
     memset(sRoomCode, 0, sizeof(sRoomCode));
     memset(sClientIds, 0, sizeof(sClientIds));
+    memset(sPendingJoinCode, 0, sizeof(sPendingJoinCode));
+    sPendingHost = false;
 
     // Build the WebSocket URL from config
     // Default: ws://localhost:8765
@@ -133,10 +313,9 @@ static bool ns_websocket_initialize(enum NetworkType networkType, UNUSED bool re
 
     LOG_INFO("WebSocket connecting to %s (networkType=%d)", relayUrl, networkType);
 
-    if (networkType == NT_CLIENT) {
-        djui_connect_menu_open();
-        gNetworkType = NT_CLIENT;
-        network_send_mod_list_request();
+    // Queue the host/join command to be sent after the WebSocket opens
+    if (networkType == NT_SERVER) {
+        sPendingHost = true;
     }
 
     return true;
@@ -274,12 +453,16 @@ static void ns_websocket_shutdown(UNUSED bool reconnecting) {
     }
 #endif
     sConnected = false;
+    sInRoom = false;
+    sWaitingForRoom = false;
     sMsgQueueHead = 0;
     sMsgQueueTail = 0;
     sMsgQueueCount = 0;
     sLocalClientIndex = 0;
     memset(sRoomCode, 0, sizeof(sRoomCode));
     memset(sClientIds, 0, sizeof(sClientIds));
+    memset(sPendingJoinCode, 0, sizeof(sPendingJoinCode));
+    sPendingHost = false;
     LOG_INFO("WebSocket shutdown");
 }
 

@@ -15,7 +15,10 @@ static void djui_panel_join_public_lobbies(struct DjuiBase* caller) {
 #endif
 
 void djui_panel_join_create(struct DjuiBase* caller) {
-#ifndef COOPNET
+#ifdef TARGET_WEB
+    // Web builds go directly to room code join panel
+    djui_panel_join_direct_create(caller);
+#elif !defined(COOPNET)
     djui_panel_join_direct_create(caller);
 #else
     struct DjuiThreePanel* panel = djui_panel_menu_create(DLANG(JOIN, JOIN_TITLE), false);

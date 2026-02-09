@@ -12,9 +12,13 @@
 #include "pc/configfile.h"
 #include "pc/debuglog.h"
 #include "macros.h"
+#ifdef TARGET_WEB
+#include "pc/network/websocket/network_websocket.h"
+#endif
 
 static struct DjuiInputbox* sInputboxIp = NULL;
 
+#ifndef TARGET_WEB
 static bool djui_panel_join_direct_ip_parse_numbers(char** msg) {
     int num = 0;
     for (int i = 0; i < 3; i++) {
@@ -83,6 +87,7 @@ static bool djui_panel_join_direct_ip_valid(char* buffer) {
 
     return (**msg == '\0');
 }
+#endif /* !TARGET_WEB */
 
 static void djui_panel_join_direct_ip_text_change(struct DjuiBase* caller) {
     struct DjuiInputbox* inputbox1 = (struct DjuiInputbox*)caller;
@@ -93,6 +98,7 @@ static void djui_panel_join_direct_ip_text_change(struct DjuiBase* caller) {
     }
 }
 
+#ifndef TARGET_WEB
 static void djui_panel_join_direct_ip_text_set_new(void) {
     char buffer[256] = { 0 };
     char orig_ip[256] = { 0 };
@@ -107,7 +113,7 @@ static void djui_panel_join_direct_ip_text_set_new(void) {
     bool is_ipv6 = false;
     int port = 0;
 
-    // check if address starts with [ (meaning it's a direct IPv6 address. 
+    // check if address starts with [ (meaning it's a direct IPv6 address.
     // This is needed because we need to know when to get the port number. Example: [2001:db8::1000]:7777
     // If this character is not in the first character in the buffer, it will be treated as an IPv4 address or hostname.
     if (buffer[0] == '[') {
@@ -181,6 +187,7 @@ static void djui_panel_join_direct_ip_text_set(struct DjuiInputbox* inputbox1) {
 
     djui_inputbox_set_text(inputbox1, buffer);
 }
+#endif /* !TARGET_WEB */
 
 void djui_panel_join_direct_do_join(struct DjuiBase* caller) {
     if (!(strlen(sInputboxIp->buffer) > 2)) {
@@ -189,9 +196,20 @@ void djui_panel_join_direct_do_join(struct DjuiBase* caller) {
         return;
     }
     network_reset_reconnect_and_rehost();
+
+#ifdef TARGET_WEB
+    // Web builds: use WebSocket backend and join room by code
+    // Set the pending join code so it's sent once the WebSocket opens
+    ns_websocket_set_pending_join(sInputboxIp->buffer);
+    configNetworkSystem = NS_WEBSOCKET;
+    network_set_system(NS_WEBSOCKET);
+    network_init(NT_CLIENT, false);
+#else
     djui_panel_join_direct_ip_text_set_new();
     network_set_system(NS_SOCKET);
     network_init(NT_CLIENT, false);
+#endif
+
     djui_panel_join_message_create(caller);
 }
 
@@ -200,7 +218,11 @@ void djui_panel_join_direct_create(struct DjuiBase* caller) {
     struct DjuiThreePanel* panel = djui_panel_menu_create(DLANG(JOIN, JOIN_TITLE), false);
     struct DjuiBase* body = djui_three_panel_get_body(panel);
     {
+#ifdef TARGET_WEB
+        struct DjuiText* text1 = djui_text_create(body, DLANG(JOIN, JOIN_WEBSOCKET));
+#else
         struct DjuiText* text1 = djui_text_create(body, DLANG(JOIN, JOIN_SOCKET));
+#endif
         djui_base_set_size_type(&text1->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
         djui_base_set_size(&text1->base, 1.0f, 100);
         djui_base_compute_tree(&text1->base);
@@ -209,12 +231,19 @@ void djui_panel_join_direct_create(struct DjuiBase* caller) {
         djui_base_set_size(&text1->base, 1.0f, directTextHeight);
         djui_base_set_color(&text1->base, 220, 220, 220, 255);
 
+#ifdef TARGET_WEB
+        struct DjuiInputbox* inputbox1 = djui_inputbox_create(body, 32);
+#else
         struct DjuiInputbox* inputbox1 = djui_inputbox_create(body, 256);
+#endif
         djui_base_set_size_type(&inputbox1->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
         djui_base_set_size(&inputbox1->base, 1.0f, 32.0f);
         djui_interactable_hook_value_change(&inputbox1->base, djui_panel_join_direct_ip_text_change);
         sInputboxIp = inputbox1;
+
+#ifndef TARGET_WEB
         djui_panel_join_direct_ip_text_set(inputbox1);
+#endif
 
         struct DjuiRect* rect2 = djui_rect_container_create(body, 64);
         {

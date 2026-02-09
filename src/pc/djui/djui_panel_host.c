@@ -12,6 +12,9 @@
 #include "pc/utils/misc.h"
 #include "pc/configfile.h"
 #include "pc/update_checker.h"
+#ifdef TARGET_WEB
+#include "pc/network/websocket/network_websocket.h"
+#endif
 
 static struct DjuiRect* sRectPort = NULL;
 static struct DjuiInputbox* sInputboxPort = NULL;
@@ -27,6 +30,7 @@ static void djui_panel_host_network_system_change(UNUSED struct DjuiBase* base) 
 }
 #endif
 
+#ifndef TARGET_WEB
 static bool djui_panel_host_port_valid(void) {
     char* buffer = sInputboxPort->buffer;
     int port = 0;
@@ -51,6 +55,7 @@ static void djui_panel_host_port_text_change(struct DjuiBase* caller) {
         djui_inputbox_set_text_color(sInputboxPort, 255, 0, 0, 255);
     }
 }
+#endif /* !TARGET_WEB */
 
 #ifdef COOPNET
 static void djui_panel_host_password_text_change(UNUSED struct DjuiBase* caller) {
@@ -63,6 +68,20 @@ static void djui_panel_host_password_text_change(UNUSED struct DjuiBase* caller)
 
 extern void djui_panel_do_host(bool reconnecting, bool playSound);
 static void djui_panel_host_do_host(struct DjuiBase* caller) {
+#ifdef TARGET_WEB
+    (void)caller;
+    // Web builds use WebSocket directly — no port validation needed
+    if (configAmountOfPlayers < 1 || configAmountOfPlayers > MAX_PLAYERS) {
+        return;
+    }
+    configNetworkSystem = NS_WEBSOCKET;
+    if (gNetworkType == NT_SERVER) {
+        network_rehost_begin();
+    } else {
+        network_reset_reconnect_and_rehost();
+        djui_panel_do_host(false, true);
+    }
+#else
     if (!djui_panel_host_port_valid()) {
         djui_interactable_set_input_focus(&sInputboxPort->base);
         djui_inputbox_select_all(sInputboxPort);
@@ -84,6 +103,7 @@ static void djui_panel_host_do_host(struct DjuiBase* caller) {
     } else {
         djui_panel_host_message_create(caller);
     }
+#endif
 }
 
 void djui_panel_host_create(struct DjuiBase* caller) {
@@ -93,6 +113,21 @@ void djui_panel_host_create(struct DjuiBase* caller) {
         false);
     struct DjuiBase* body = djui_three_panel_get_body(panel);
     {
+#ifdef TARGET_WEB
+        // Web builds: show relay info instead of network system selection
+        struct DjuiText* textRelay = djui_text_create(body, DLANG(HOST, WEBSOCKET_INFO));
+        djui_base_set_size_type(&textRelay->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
+        djui_base_set_size(&textRelay->base, 1.0f, 64);
+        djui_base_set_color(&textRelay->base, 220, 220, 220, 255);
+
+        // Hidden port inputbox (required by djui_panel_host_port_valid)
+        struct DjuiRect* rectHidden = djui_rect_container_create(body, 0);
+        djui_base_set_visible(&rectHidden->base, false);
+        sRectPort = rectHidden;
+        sInputboxPort = djui_inputbox_create(&rectHidden->base, 32);
+        djui_inputbox_set_text(sInputboxPort, "8765");
+        djui_base_set_visible(&sInputboxPort->base, false);
+#else
         #ifdef COOPNET
         char* nChoices[] = { DLANG(HOST, DIRECT_CONNECTION), DLANG(HOST, COOPNET) };
         struct DjuiSelectionbox* selectionbox1 = djui_selectionbox_create(body, DLANG(HOST, NETWORK_SYSTEM), nChoices, 2, &configNetworkSystem, djui_panel_host_network_system_change);
@@ -162,6 +197,7 @@ void djui_panel_host_create(struct DjuiBase* caller) {
             }
 #endif
         }
+#endif /* !TARGET_WEB */
 
         struct DjuiRect* rect2 = djui_rect_container_create(body, 32);
         {

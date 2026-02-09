@@ -21,10 +21,14 @@ void djui_panel_do_host(bool reconnecting, bool playSound) {
     gCurrSaveFileNum = configHostSaveSlot;
     update_all_mario_stars();
 
+#ifdef TARGET_WEB
+    configNetworkSystem = NS_WEBSOCKET;
+#else
 #ifndef COOPNET
     if (configNetworkSystem == NS_COOPNET) { configNetworkSystem = NS_SOCKET; }
 #endif
     if (configNetworkSystem == NS_COOPNET && configAmountOfPlayers == 1) { configNetworkSystem = NS_SOCKET; }
+#endif
     if (configNetworkSystem >= NS_MAX) { configNetworkSystem = NS_MAX; }
     network_set_system(configNetworkSystem);
 
@@ -50,9 +54,15 @@ void djui_panel_host_message_create(struct DjuiBase* caller) {
     char* warningMessage = NULL;
     bool hideHostButton = false;
 
+#ifdef TARGET_WEB
+    f32 warningLines = 4;
+    warningMessage = calloc(512, sizeof(char));
+    snprintf(warningMessage, 512, "%s", DLANG(HOST_MESSAGE, WARN_WEBSOCKET));
+#else
     f32 warningLines = 8;
     warningMessage = calloc(512, sizeof(char));
     snprintf(warningMessage, 512, DLANG(HOST_MESSAGE, WARN_SOCKET), configHostPort);
+#endif
 
     f32 textHeight = 32 * 0.8125f * warningLines + 8;
 
