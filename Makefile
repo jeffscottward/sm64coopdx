@@ -524,6 +524,8 @@ endif
 
 SRC_DIRS += src/pc/mumble
 
+SRC_DIRS += src/pc/web
+
 ULTRA_SRC_DIRS := lib/src lib/src/math lib/asm lib/data
 ULTRA_BIN_DIRS := lib/bin
 

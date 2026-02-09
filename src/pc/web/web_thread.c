@@ -1,5 +1,5 @@
 /**
- * web_thread.c — Single-threaded fallback for Emscripten/WebAssembly builds.
+ * web_thread.c -- Single-threaded fallback for Emscripten/WebAssembly builds.
  *
  * This file provides stub implementations of the threading API defined in
  * src/pc/thread.h. In the web build, all "threaded" work is executed
@@ -16,17 +16,16 @@
  * features like pthread_cancel.
  *
  * Build integration:
- *   This file can be compiled *instead of* src/pc/thread.c when building
- *   for web (TARGET_WEB=1). Alternatively, thread.c itself contains
- *   #ifdef TARGET_WEB guards that compile the same single-threaded stubs
- *   inline, so this file serves as a standalone reference / alternative
- *   that can be swapped in via Makefile adjustments.
- *
- * Usage with Makefile.web:
- *   If the build system is configured to exclude thread.c for web builds
- *   and include src/pc/web/ in SRC_DIRS, this file provides all required
- *   thread API symbols.
+ *   This file is a standalone reference/alternative that can be compiled
+ *   *instead of* src/pc/thread.c for web builds. However, thread.c already
+ *   contains #ifdef TARGET_WEB guards that compile the same stubs inline,
+ *   so this file is excluded by default to avoid duplicate symbol errors.
+ *   Define WEB_USE_STANDALONE_THREAD to use this file instead of thread.c.
  */
+
+/* Guard: thread.c already provides web stubs via TARGET_WEB guards.
+ * This file is only compiled if explicitly opted in. */
+#ifdef WEB_USE_STANDALONE_THREAD
 
 #include "pc/thread.h"
 
@@ -115,3 +114,5 @@ int unlock_mutex(struct ThreadHandle *handle) {
     assert(handle != NULL);
     return 0;  // No-op
 }
+
+#endif /* WEB_USE_STANDALONE_THREAD */

@@ -56,6 +56,8 @@ WEB_LDFLAGS := \
 	-s PTHREAD_POOL_SIZE=4 \
 	-s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
 	-s FORCE_FILESYSTEM=1 \
+	-s ASYNCIFY \
+	-s ASYNCIFY_STACK_SIZE=65536 \
 	--preload-file $(BUILD_DIR_WEB)/lang@/lang \
 	--preload-file $(BUILD_DIR_WEB)/dynos@/dynos \
 	-lidbfs.js
