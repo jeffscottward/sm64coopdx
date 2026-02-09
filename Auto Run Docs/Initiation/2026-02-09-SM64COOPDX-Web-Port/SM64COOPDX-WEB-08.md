@@ -18,7 +18,7 @@ This phase implements the ability to load Lua mods directly from URLs in the bro
 
   **Completed:** Created `src/pc/web/web_mod_loader.h` and `src/pc/web/web_mod_loader.c`. Implementation uses browser Fetch API via EM_ASM for HTTP downloads, writes to Emscripten VFS mods directory, and persists via web_storage_save(). Both blocking (web_mod_download with ASYNCIFY polling) and non-blocking (web_mod_download_async with callback) APIs provided. Error codes: WEB_MOD_OK(0), WEB_MOD_ERR_FETCH(-1), WEB_MOD_ERR_WRITE(-2), WEB_MOD_ERR_BADURL(-3), WEB_MOD_ERR_TOOLARGE(-4). 16MB size limit. URL filename extraction for auto-naming. Native stubs compile to error-returning no-ops. 22 tests pass in both native and web-simulated modes. Full Emscripten build verified.
 
-- [ ] Implement mod caching in IndexedDB via the existing IDBFS storage:
+- [x] Implement mod caching in IndexedDB via the existing IDBFS storage:
   - When a mod is downloaded, it's written to the mods directory in Emscripten's virtual filesystem
   - After writing, call `web_storage_save()` (from Phase 04) to persist the mod to IndexedDB
   - On subsequent visits, mods persist — the user doesn't need to re-download
@@ -28,6 +28,17 @@ This phase implements the ability to load Lua mods directly from URLs in the bro
     - File hash (for cache invalidation)
     - File size
   - Add a function to check if a cached mod is up-to-date before re-downloading
+
+  **Completed:** Enhanced the existing cache manifest system with content-based hashing and freshness validation. Key changes:
+  - `web_mod_cache_update()` now hashes actual file contents (djb2 over bytes) instead of just the URL string, enabling real cache invalidation when files change
+  - Added `hash_file_contents()` internal function that reads files in 4KB chunks for efficient content hashing
+  - Added `web_mod_cache_get_filename(url, buf, bufsize)` — looks up cached filename for a URL in the manifest
+  - Added `web_mod_cache_is_fresh(url)` — checks if the on-disk file's content hash matches the manifest entry, detecting deleted/modified files
+  - Added `web_mod_cache_remove(url)` — removes a URL's entry from the cache manifest (rewrites JSON excluding the entry)
+  - All new functions have native build stubs (return 0/no-op) so callers don't need `#ifdef` guards
+  - The download flow already calls `web_storage_save()` after `web_mod_cache_update()`, persisting both mod files and the cache manifest to IndexedDB
+  - 21 new tests pass in both native and web-simulated modes; all 22 existing mod loader tests still pass
+  - Full Emscripten build verified clean (only web_mod_loader.o recompiled + relinked)
 
 - [ ] Add a mod URL input to the DJUI mod management UI:
   - Read `src/pc/djui/djui_panel_modlist.c` to understand the existing mod list UI

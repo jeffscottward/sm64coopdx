@@ -113,6 +113,43 @@ void web_mod_cache_update(const char* url, const char* filename, int size);
  */
 void web_mod_check_async_complete(void);
 
+/**
+ * Get the cached filename for a URL.
+ *
+ * Looks up the URL in the cache manifest and copies the associated
+ * local filename into buf. Returns 1 if found, 0 if not cached.
+ *
+ * @param url      URL to look up.
+ * @param buf      Buffer to receive the filename.
+ * @param bufsize  Size of buf.
+ * @return 1 if found, 0 otherwise.
+ */
+int web_mod_cache_get_filename(const char* url, char* buf, int bufsize);
+
+/**
+ * Check if a cached mod is still fresh (file content matches manifest hash).
+ *
+ * Reads the cache manifest for the URL, finds the stored content hash,
+ * then hashes the actual file on disk and compares. Returns 1 if the
+ * cached mod is valid and matches, 0 if stale or missing.
+ *
+ * Use this before re-downloading: if fresh, the mod is already available.
+ *
+ * @param url  URL to check freshness for.
+ * @return 1 if cached and fresh, 0 otherwise.
+ */
+int web_mod_cache_is_fresh(const char* url);
+
+/**
+ * Remove a URL's entry from the cache manifest.
+ *
+ * Rewrites the manifest excluding the entry for the given URL.
+ * Does not delete the mod file itself from the VFS.
+ *
+ * @param url  URL whose cache entry should be removed.
+ */
+void web_mod_cache_remove(const char* url);
+
 #else /* !__EMSCRIPTEN__ */
 
 /* Native builds: no-op stubs. */
@@ -145,6 +182,20 @@ static inline void web_mod_cache_update(const char* url, const char* filename, i
 }
 
 static inline void web_mod_check_async_complete(void) { (void)0; }
+
+static inline int web_mod_cache_get_filename(const char* url, char* buf, int bufsize) {
+    (void)url; (void)buf; (void)bufsize;
+    return 0;
+}
+
+static inline int web_mod_cache_is_fresh(const char* url) {
+    (void)url;
+    return 0;
+}
+
+static inline void web_mod_cache_remove(const char* url) {
+    (void)url;
+}
 
 #endif /* __EMSCRIPTEN__ */
 

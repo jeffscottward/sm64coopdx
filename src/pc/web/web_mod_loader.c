@@ -73,7 +73,7 @@ static void extract_filename_from_url(const char* url, char* buf, int bufsize) {
 }
 
 /*
- * Simple string hash for cache manifest.
+ * Simple string hash (djb2) for cache manifest.
  * Returns a 32-bit hash of the input string.
  */
 static unsigned int simple_hash(const char* str) {
@@ -82,6 +82,27 @@ static unsigned int simple_hash(const char* str) {
     while ((c = *str++)) {
         hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
     }
+    return hash;
+}
+
+/*
+ * Hash file contents on disk.
+ * Reads the file at the given path and computes a djb2 hash of its bytes.
+ * Returns 0 if the file cannot be read.
+ */
+static unsigned int hash_file_contents(const char* path) {
+    FILE* fp = fopen(path, "rb");
+    if (!fp) return 0;
+
+    unsigned int hash = 5381;
+    unsigned char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        for (size_t i = 0; i < n; i++) {
+            hash = ((hash << 5) + hash) + buf[i];
+        }
+    }
+    fclose(fp);
     return hash;
 }
 
@@ -471,12 +492,20 @@ void web_mod_cache_update(const char* url, const char* filename, int size) {
         }
     }
 
-    /* Update the entry */
+    /* Update the entry — hash file contents for cache invalidation */
     snprintf(entries[idx].url, sizeof(entries[idx].url), "%s", url);
     snprintf(entries[idx].filename, sizeof(entries[idx].filename), "%s", filename);
-    entries[idx].hash = simple_hash(url);
     entries[idx].size = size;
     entries[idx].timestamp = (long)time(NULL);
+
+    /* Compute content hash from the actual file on disk */
+    char filePath[SYS_MAX_PATH];
+    snprintf(filePath, sizeof(filePath), "%s/%s", modsPath, filename);
+    entries[idx].hash = hash_file_contents(filePath);
+    if (entries[idx].hash == 0) {
+        /* Fallback to URL hash if file read failed */
+        entries[idx].hash = simple_hash(url);
+    }
 
     /* Write the manifest */
     f = fopen(manifestPath, "w");
@@ -494,6 +523,274 @@ void web_mod_cache_update(const char* url, const char* filename, int size) {
         fprintf(f, "    \"size\": %d,\n", entries[i].size);
         fprintf(f, "    \"timestamp\": %ld\n", entries[i].timestamp);
         fprintf(f, "  }%s\n", (i < entryCount - 1) ? "," : "");
+    }
+    fprintf(f, "]\n");
+    fclose(f);
+}
+
+/**
+ * Get the cached filename for a given URL.
+ *
+ * Looks up the URL in the cache manifest and copies the associated
+ * filename into the provided buffer. Returns 1 if found, 0 if not.
+ */
+int web_mod_cache_get_filename(const char* url, char* buf, int bufsize) {
+    if (!url || url[0] == '\0' || !buf || bufsize <= 0) return 0;
+
+    const char* modsPath = fs_get_write_path("mods");
+    if (!modsPath) return 0;
+
+    char manifestPath[SYS_MAX_PATH];
+    snprintf(manifestPath, sizeof(manifestPath), "%s/.web_cache.json", modsPath);
+
+    FILE* f = fopen(manifestPath, "r");
+    if (!f) return 0;
+
+    char line[1024];
+    int foundUrl = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char* urlField = strstr(line, "\"url\":");
+        if (urlField) {
+            char* q1 = strchr(urlField + 6, '"');
+            if (q1) {
+                char* q2 = strchr(q1 + 1, '"');
+                if (q2) {
+                    int len = (int)(q2 - q1 - 1);
+                    if (len > 0 && len < 1024) {
+                        char tmpUrl[1024];
+                        memcpy(tmpUrl, q1 + 1, len);
+                        tmpUrl[len] = '\0';
+                        foundUrl = (strcmp(tmpUrl, url) == 0);
+                    }
+                }
+            }
+        }
+
+        if (foundUrl) {
+            char* fnField = strstr(line, "\"filename\":");
+            if (fnField) {
+                char* q1 = strchr(fnField + 11, '"');
+                if (q1) {
+                    char* q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        int len = (int)(q2 - q1 - 1);
+                        if (len > 0 && len < bufsize) {
+                            memcpy(buf, q1 + 1, len);
+                            buf[len] = '\0';
+                            fclose(f);
+                            return 1;
+                        }
+                    }
+                }
+            }
+            /* Entry ends at closing brace */
+            if (strchr(line, '}')) {
+                foundUrl = 0;
+            }
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+/**
+ * Check if a cached mod file is fresh (content hash matches).
+ *
+ * Reads the cache manifest for the given URL, finds the stored hash,
+ * then hashes the actual file on disk and compares. Returns 1 if the
+ * file exists and its content hash matches the manifest, 0 otherwise.
+ *
+ * This allows detecting if a cached mod was modified externally or if
+ * the on-disk file has been deleted.
+ */
+int web_mod_cache_is_fresh(const char* url) {
+    if (!url || url[0] == '\0') return 0;
+
+    const char* modsPath = fs_get_write_path("mods");
+    if (!modsPath) return 0;
+
+    char manifestPath[SYS_MAX_PATH];
+    snprintf(manifestPath, sizeof(manifestPath), "%s/.web_cache.json", modsPath);
+
+    FILE* f = fopen(manifestPath, "r");
+    if (!f) return 0;
+
+    /* Parse manifest to find the entry for this URL */
+    char line[1024];
+    int foundUrl = 0;
+    char filename[256] = {0};
+    unsigned int storedHash = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        char* urlField = strstr(line, "\"url\":");
+        if (urlField) {
+            char* q1 = strchr(urlField + 6, '"');
+            if (q1) {
+                char* q2 = strchr(q1 + 1, '"');
+                if (q2) {
+                    int len = (int)(q2 - q1 - 1);
+                    if (len > 0 && len < 1024) {
+                        char tmpUrl[1024];
+                        memcpy(tmpUrl, q1 + 1, len);
+                        tmpUrl[len] = '\0';
+                        foundUrl = (strcmp(tmpUrl, url) == 0);
+                    }
+                }
+            }
+        }
+
+        if (foundUrl) {
+            char* fnField = strstr(line, "\"filename\":");
+            if (fnField) {
+                char* q1 = strchr(fnField + 11, '"');
+                if (q1) {
+                    char* q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        int len = (int)(q2 - q1 - 1);
+                        if (len > 0 && len < (int)sizeof(filename)) {
+                            memcpy(filename, q1 + 1, len);
+                            filename[len] = '\0';
+                        }
+                    }
+                }
+            }
+
+            char* hashField = strstr(line, "\"hash\":");
+            if (hashField) {
+                storedHash = (unsigned int)strtoul(hashField + 7, NULL, 10);
+            }
+
+            if (strchr(line, '}')) {
+                break; /* End of this entry */
+            }
+        }
+    }
+    fclose(f);
+
+    if (!foundUrl || filename[0] == '\0' || storedHash == 0) return 0;
+
+    /* Hash the actual file on disk and compare */
+    char filePath[SYS_MAX_PATH];
+    snprintf(filePath, sizeof(filePath), "%s/%s", modsPath, filename);
+
+    unsigned int diskHash = hash_file_contents(filePath);
+    if (diskHash == 0) return 0; /* File doesn't exist or is empty */
+
+    return (diskHash == storedHash) ? 1 : 0;
+}
+
+/**
+ * Remove a URL's entry from the cache manifest.
+ *
+ * Rewrites the manifest file excluding the entry for the given URL.
+ * Does not delete the mod file itself — only removes the cache tracking.
+ */
+void web_mod_cache_remove(const char* url) {
+    if (!url || url[0] == '\0') return;
+
+    const char* modsPath = fs_get_write_path("mods");
+    if (!modsPath) return;
+
+    char manifestPath[SYS_MAX_PATH];
+    snprintf(manifestPath, sizeof(manifestPath), "%s/.web_cache.json", modsPath);
+
+    /* Reuse the CacheEntry struct pattern from web_mod_cache_update */
+    #ifndef MAX_CACHE_ENTRIES
+    #define MAX_CACHE_ENTRIES 64
+    #endif
+
+    struct CacheEntry {
+        char url[1024];
+        char filename[256];
+        unsigned int hash;
+        int size;
+        long timestamp;
+    };
+
+    struct CacheEntry entries[MAX_CACHE_ENTRIES];
+    int entryCount = 0;
+
+    FILE* f = fopen(manifestPath, "r");
+    if (!f) return;
+
+    char line[1024];
+    struct CacheEntry* cur = NULL;
+
+    while (fgets(line, sizeof(line), f) && entryCount < MAX_CACHE_ENTRIES) {
+        char* urlField = strstr(line, "\"url\":");
+        if (urlField) {
+            cur = &entries[entryCount];
+            memset(cur, 0, sizeof(*cur));
+
+            char* quote1 = strchr(urlField + 6, '"');
+            if (quote1) {
+                char* quote2 = strchr(quote1 + 1, '"');
+                if (quote2) {
+                    int len = (int)(quote2 - quote1 - 1);
+                    if (len > 0 && len < (int)sizeof(cur->url)) {
+                        memcpy(cur->url, quote1 + 1, len);
+                        cur->url[len] = '\0';
+                    }
+                }
+            }
+        }
+
+        if (cur) {
+            char* fnField = strstr(line, "\"filename\":");
+            if (fnField) {
+                char* q1 = strchr(fnField + 11, '"');
+                if (q1) {
+                    char* q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        int len = (int)(q2 - q1 - 1);
+                        if (len > 0 && len < (int)sizeof(cur->filename)) {
+                            memcpy(cur->filename, q1 + 1, len);
+                            cur->filename[len] = '\0';
+                        }
+                    }
+                }
+            }
+
+            char* sizeField = strstr(line, "\"size\":");
+            if (sizeField) cur->size = atoi(sizeField + 7);
+
+            char* tsField = strstr(line, "\"timestamp\":");
+            if (tsField) cur->timestamp = atol(tsField + 12);
+
+            char* hashField = strstr(line, "\"hash\":");
+            if (hashField) cur->hash = (unsigned int)strtoul(hashField + 7, NULL, 10);
+
+            if (strchr(line, '}') && cur->url[0] != '\0') {
+                entryCount++;
+                cur = NULL;
+            }
+        }
+    }
+    fclose(f);
+
+    /* Rewrite the manifest, excluding the entry matching this URL */
+    f = fopen(manifestPath, "w");
+    if (!f) return;
+
+    int writeCount = 0;
+    /* Count how many entries we'll keep */
+    int keepCount = 0;
+    for (int i = 0; i < entryCount; i++) {
+        if (strcmp(entries[i].url, url) != 0) keepCount++;
+    }
+
+    fprintf(f, "[\n");
+    for (int i = 0; i < entryCount; i++) {
+        if (strcmp(entries[i].url, url) == 0) continue;
+
+        fprintf(f, "  {\n");
+        fprintf(f, "    \"url\": \"%s\",\n", entries[i].url);
+        fprintf(f, "    \"filename\": \"%s\",\n", entries[i].filename);
+        fprintf(f, "    \"hash\": %u,\n", entries[i].hash);
+        fprintf(f, "    \"size\": %d,\n", entries[i].size);
+        fprintf(f, "    \"timestamp\": %ld\n", entries[i].timestamp);
+        writeCount++;
+        fprintf(f, "  }%s\n", (writeCount < keepCount) ? "," : "");
     }
     fprintf(f, "]\n");
     fclose(f);
