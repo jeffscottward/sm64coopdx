@@ -16,6 +16,7 @@
 #include "pc/thread.h"
 #ifdef TARGET_WEB
 #include "pc/web/web_mod_loader.h"
+#include "djui_panel_mod_browser.h"
 #endif
 
 #define DJUI_MOD_PANEL_WIDTH (410.0f + (16 * 2.0f))
@@ -369,8 +370,12 @@ void djui_panel_host_mods_create(struct DjuiBase* caller) {
         sModPaginated = paginated;
 
 #ifdef TARGET_WEB
-        /* Web mod URL download section */
+        /* Web mod browser and URL download section */
         if (gNetworkType == NT_NONE) {
+            /* Browse Mods button — opens curated catalog panel */
+            djui_button_create(body, DLANG(HOST_MODS, BROWSE_MODS),
+                DJUI_BUTTON_STYLE_NORMAL, djui_panel_mod_browser_create);
+
             struct DjuiText* urlLabel = djui_text_create(body, DLANG(HOST_MODS, LOAD_FROM_URL));
             djui_base_set_size_type(&urlLabel->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);
             djui_base_set_size(&urlLabel->base, 1.0f, 32);
@@ -417,8 +422,8 @@ void djui_panel_host_mods_create(struct DjuiBase* caller) {
         }
 
 #ifdef TARGET_WEB
-        /* Extra space for URL input section: label(32) + inputRow(32) + progressBar(8) + statusText(20) + margins */
-        panel->bodySize.value = paginated->base.height.value + 64 + 64 + (gNetworkType == NT_NONE ? 120 : 0);
+        /* Extra space for Browse Mods button(64) + URL input section: label(32) + inputRow(32) + progressBar(8) + statusText(20) + margins */
+        panel->bodySize.value = paginated->base.height.value + 64 + 64 + (gNetworkType == NT_NONE ? 184 : 0);
 #else
         panel->bodySize.value = paginated->base.height.value + 64 + 64;
 #endif

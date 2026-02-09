@@ -65,12 +65,26 @@ This phase implements the ability to load Lua mods directly from URLs in the bro
   - 39 tests pass in both native and web-simulated modes
   - Full Emscripten build verified clean (recompiled djui_panel_host_mods.o + pc_main.o, relinked)
 
-- [ ] Create a curated mod browser (optional enhancement):
+- [x] Create a curated mod browser (optional enhancement):
   - If `mods.sm64coopdx.com` provides an API or structured listing, create a browsable mod catalog
   - Add a "Browse Mods" button to the DJUI mod panel
   - Show a list of available mods with names, descriptions, and download buttons
   - This is lower priority — the URL input from the previous task provides the core functionality
   - If no API exists, this can be a static list of popular mod URLs hardcoded or fetched from a JSON file
+
+  **Completed:** Created `src/pc/djui/djui_panel_mod_browser.c` and `djui_panel_mod_browser.h` implementing a curated mod catalog browser. Key implementation details:
+  - **Static catalog**: 8 popular mods hardcoded as `ModBrowserEntry` structs (name, description, URL, category) — covers movesets, gamemodes, romhacks, character select, and misc categories
+  - **`mod_browser_get_catalog(int* count)`**: Public getter for the catalog array and count
+  - **Paginated UI**: Uses `djui_paginated_create(body, 4)` with 4 entries per page, each showing mod name (yellow), description (gray), and Install/Installed button
+  - **Install flow**: Clicking "Install" checks `web_mod_is_cached()` first — if already installed, shows popup; otherwise starts `web_mod_download_async()` with callback that refreshes mod system and rebuilds the list to show "Installed" status
+  - **Download guard**: `sBrowserDownloadingIndex` prevents concurrent downloads with "already downloading" popup
+  - **Status feedback**: Status text below the list shows color-coded messages (green=success, red=error, gray=installing)
+  - **Browse Mods button**: Added to `djui_panel_host_mods.c` in the `#ifdef TARGET_WEB` section, navigates to the browser panel when clicked
+  - **Language strings**: 12 new strings in `lang/English.ini` under `[MOD_BROWSER]` section + 1 `BROWSE_MODS` in `[HOST_MODS]`
+  - All code guarded with `#ifdef TARGET_WEB` — zero impact on native builds
+  - Panel body size adjusted (+64px) to accommodate the new Browse Mods button
+  - 85 tests pass (82 web-simulated + 3 native) + all 43 existing mod loader/cache tests still pass
+  - Full Emscripten build verified clean (recompiled `djui_panel_mod_browser.o` + `djui_panel_host_mods.o`, relinked)
 
 - [ ] Test mod loading end-to-end:
   - Upload a simple test Lua mod (e.g., one that changes Mario's speed or adds a HUD message) to a web server or use a known mod URL
