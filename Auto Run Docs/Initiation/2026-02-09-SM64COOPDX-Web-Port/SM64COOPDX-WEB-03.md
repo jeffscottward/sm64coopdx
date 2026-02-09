@@ -69,8 +69,14 @@ This phase adapts the audio system, controller input, and networking layer for b
   - **No code changes required** — the existing guard structure is complete and correct for web builds.
   - Tests: Compilation guard tests pass in all three modes (disabled, enabled, mixed) with `-Wall -Wextra -Werror`.
 
-- [ ] Handle the Mumble positional audio integration:
+- [x] Handle the Mumble positional audio integration:
   - Read `src/pc/mumble/mumble.c` — this uses shared memory (`shm_open`, `mmap`) which doesn't exist in browsers
   - Wrap the entire Mumble implementation in `#ifndef TARGET_WEB` guards
   - Make `mumble_init()` and `mumble_update()` no-ops when `TARGET_WEB` is defined
   - The calls in `pc_main.c` at lines 469 and 613 reference Mumble — ensure they compile to nothing for web
+
+  **Completion Notes:**
+  - **mumble.h**: Added `#ifdef TARGET_WEB` / `#else` guard around the entire header contents. The web branch provides `static inline` no-op stubs for all four public functions (`mumble_init()`, `mumble_update()`, `mumble_update_menu()`, `should_update_context()`) so call sites in `pc_main.c` compile to nothing without needing `#ifdef` guards at every call. The `<stdint.h>` and `<wchar.h>` includes (needed for the `LinkedMem` struct) and the struct definition itself are moved into the native-only branch, since browsers have no use for the shared memory data layout.
+  - **mumble.c**: Wrapped the entire implementation body (all includes, the `LinkedMem *lm` global, and all four functions including POSIX `shm_open`/`mmap`/`getuid`/`fcntl` and Windows `OpenFileMappingW`/`MapViewOfFile` calls) in `#ifndef TARGET_WEB` / `#endif`. The `#include "mumble.h"` remains unconditional so the header's no-op stubs satisfy the linker on web builds.
+  - **pc_main.c**: No changes needed. The three Mumble call sites (line 477 `mumble_init()`, line 491 `mumble_update()` in `web_main_loop_iteration`, line 650 `mumble_update()` in the native main loop) all include `mumble.h`, which provides the `static inline` no-op stubs when `TARGET_WEB` is defined. The compiler optimizes these to nothing.
+  - Tests: Native and TARGET_WEB compilation tests pass with `-Wall -Wextra -Werror`. Syntax checks on the actual modified headers pass in both modes.

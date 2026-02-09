@@ -2,6 +2,12 @@
 
 #include "mumble.h"
 
+#ifndef TARGET_WEB
+/* Mumble positional audio uses shared memory (shm_open/mmap on POSIX,
+   MapViewOfFile on Windows) which is unavailable in browsers. The entire
+   implementation is excluded for web builds; mumble.h provides static
+   inline no-op stubs instead. */
+
 #include "engine/math_util.h"
 
 #include "game/level_update.h"
@@ -196,3 +202,5 @@ bool should_update_context() {
 
 	return true;
 }
+
+#endif /* !TARGET_WEB */

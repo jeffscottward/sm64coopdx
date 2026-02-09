@@ -1,9 +1,24 @@
 #ifndef MUMBLE_H
 #define MUMBLE_H
 
+#include <stdbool.h>
+
+#ifdef TARGET_WEB
+
+/*
+ * Mumble positional audio uses shared memory (shm_open, mmap) which is
+ * unavailable in browsers.  Provide no-op stubs so call sites in pc_main.c
+ * compile to nothing without needing #ifdef guards at every call.
+ */
+static inline void mumble_init(void) { (void)0; }
+static inline void mumble_update(void) { (void)0; }
+static inline void mumble_update_menu(void) { (void)0; }
+static inline bool should_update_context(void) { return false; }
+
+#else /* !TARGET_WEB */
+
 #include <stdint.h>
 #include <wchar.h>
-#include <stdbool.h>
 
 struct LinkedMem {
 
@@ -30,5 +45,7 @@ void mumble_update(void);
 void mumble_update_menu(void);
 
 bool should_update_context(void);
+
+#endif /* !TARGET_WEB */
 
 #endif /* MUMBLE_H */
