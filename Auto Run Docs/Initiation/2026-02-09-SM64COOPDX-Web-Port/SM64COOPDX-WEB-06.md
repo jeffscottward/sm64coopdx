@@ -51,12 +51,21 @@ This phase takes the compiled WASM build from Phase 05 and makes it actually pla
   > 4. **Buffer sizes verified** — SDL2 uses 512 samples at 32kHz (~16ms latency), desired buffer 1100 samples (~34ms), max cap 6000 samples (~188ms). Emscripten's SDL2 port handles resampling to browser's native rate (44.1/48kHz) internally. No changes needed.
   > 5. Build verified clean — only `audio_sdl2.o` and `pc_main.o` recompiled, linked successfully.
 
-- [ ] Debug and fix game loop timing:
+- [x] Debug and fix game loop timing:
   - Verify `emscripten_set_main_loop` is being called with the right parameters
   - If the game runs too fast or too slow, check the frame timing logic in `produce_one_frame()` and `produce_interpolation_frames_and_delay()`
   - `clock_elapsed_f64()` should use `emscripten_get_now()` or `SDL_GetPerformanceCounter()` under Emscripten — verify the time source is accurate
   - The `precise_delay_f64()` function may use `usleep` or `nanosleep` — under Emscripten, `SDL_Delay` or `emscripten_sleep` should be used instead (but `emscripten_sleep` requires ASYNCIFY)
   - If the game stutters, consider simplifying the interpolation frame system for web — run at a fixed 30fps initially
+  > **Completed**: Comprehensive analysis and fix of the game loop timing for Emscripten. Found and fixed a critical double-speed bug where the game logic ran at 60fps (rAF rate) instead of 30fps. Changes made:
+  > 1. **Rewrote `web_main_loop_iteration()`** in `pc_main.c` — Replaced the pass-through to `produce_one_frame()` with a proper fixed-timestep game loop. Uses time accumulator pattern: rAF calls at ~60Hz, game logic ticks at 30Hz (FRAMERATE), with one interpolated render frame per rAF callback for smooth display. Delta clamped to 4x frame time to prevent spiral-of-death after tab backgrounding.
+  > 2. **Fixed `precise_delay_f64()`** in `misc.c` — Added `#ifdef __EMSCRIPTEN__` guard that returns immediately on web. The hybrid sleep+busy-wait strategy blocks the single JS thread; on web, `requestAnimationFrame` already provides frame pacing so delays are unnecessary.
+  > 3. **Fixed `get_display_refresh_rate()`** in `pc_main.c` — Returns 60Hz directly on Emscripten instead of querying `SDL_GetCurrentDisplayMode()` which may not report accurately in browsers.
+  > 4. **Fixed `produce_interpolation_frames_and_delay()`** in `pc_main.c` — Forces `shouldDelay=false` on Emscripten to prevent the render loop from attempting self-pacing delays that would block the browser.
+  > 5. **Added startup diagnostics** — `[Web Timing]` console logs on first frame reporting FRAMERATE, frame time, display/target refresh rates, and confirmation that delays are disabled. Aids runtime debugging via browser DevTools.
+  > 6. **Time source verified** — `clock_elapsed_f64()` uses POSIX `clock_gettime(CLOCK_MONOTONIC)` which Emscripten maps to `performance.now()` — accurate and appropriate for game timing.
+  > 7. **`emscripten_set_main_loop(web_main_loop_iteration, 0, 1)` verified correct** — fps=0 uses requestAnimationFrame (display rate), simulate_infinite_loop=1 prevents main() from returning.
+  > 8. Build verified clean — only `pc_main.o` and `misc.o` recompiled, linked successfully.
 
 - [ ] Debug and fix input handling:
   - Test keyboard input: WASD/arrow keys for movement, keys for actions

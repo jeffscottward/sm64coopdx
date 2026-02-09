@@ -5,6 +5,10 @@
 #include <time.h>
 #include <float.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "misc.h"
 
 #include "course_table.h"
@@ -94,6 +98,14 @@ bool clock_is_date(u8 month, u8 day) {
 // delay functions lack accuracy sometimes due to os scheduling
 // busy-waiting is bad practice but it's very accurate so we use a hybrid
 void precise_delay_f64(f64 delaySec) {
+#ifdef __EMSCRIPTEN__
+    // In browser builds, emscripten_set_main_loop with fps=0 uses
+    // requestAnimationFrame which already provides frame pacing.
+    // Busy-waiting would block the single JS thread and freeze the browser.
+    // SDL_Delay is also not usable without ASYNCIFY in the delay path.
+    (void)delaySec;
+    return;
+#else
     const f64 sleepMargin = 0.002; // 2 ms margin before we switch to busy-waiting
 
     f64 start = clock_elapsed_f64();
@@ -108,6 +120,7 @@ void precise_delay_f64(f64 delaySec) {
 
     // busy-wait until the target time is hit
     while (clock_elapsed_f64() < end);
+#endif
 }
 
 void file_get_line(char* buffer, size_t maxLength, FILE* fp) {

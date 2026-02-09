@@ -210,7 +210,12 @@ static s32 get_num_frames_to_draw(f64 t, u32 frameLimit) {
 }
 
 static u32 get_display_refresh_rate() {
-#ifdef HAVE_SDL2
+#ifdef __EMSCRIPTEN__
+    // In browsers, requestAnimationFrame runs at the display's refresh rate
+    // (typically 60Hz). SDL_GetCurrentDisplayMode may not report this accurately
+    // under Emscripten. Use 60 as the standard browser animation frame rate.
+    return 60;
+#elif defined(HAVE_SDL2)
     static u32 refreshRate = 0;
     if (!refreshRate) {
         SDL_DisplayMode mode;
@@ -239,10 +244,18 @@ void produce_interpolation_frames_and_delay(void) {
 
     u32 displayRefreshRate = get_display_refresh_rate();
     bool shouldDelay = configFramerateMode != RRM_UNLIMITED;
+#ifdef __EMSCRIPTEN__
+    // In browser builds, requestAnimationFrame already provides frame pacing.
+    // Disable self-pacing delays to avoid busy-waiting on the single JS thread.
+    // The browser calls web_main_loop_iteration once per display frame (~60Hz).
+    shouldDelay = false;
+    refreshRate = displayRefreshRate;
+#else
     if (configWindow.vsync && displayRefreshRate <= refreshRate) {
         shouldDelay = false;
         refreshRate = displayRefreshRate;
     }
+#endif
 
     f64 targetTime = sFrameTimeStart + sFrameTime;
     s32 numFramesToDraw = get_num_frames_to_draw(sFrameTimeStart, refreshRate);
@@ -487,10 +500,81 @@ void* main_game_init(UNUSED void* dummy) {
 }
 
 #ifdef __EMSCRIPTEN__
+// On web, requestAnimationFrame calls us at the display refresh rate (typically
+// 60 Hz), but the game logic must run at FRAMERATE (30 Hz). We accumulate time
+// and only run a game logic tick when enough time has elapsed. On each rAF
+// callback we always render an interpolation frame for smooth display.
+static f64 sWebAccumulator = 0.0;
+static f64 sWebLastTime = 0.0;
+static bool sWebTimingInitialized = false;
+
 static void web_main_loop_iteration(void) {
+    // One-time timing diagnostics on first frame
+    if (!sWebTimingInitialized) {
+        sWebLastTime = clock_elapsed_f64();
+        sWebTimingInitialized = true;
+        printf("[Web Timing] Game loop started: FRAMERATE=%d, sFrameTime=%.4f s\n", FRAMERATE, sFrameTime);
+        printf("[Web Timing] Display refresh rate: %u Hz, target refresh rate: %u Hz\n",
+               get_display_refresh_rate(), get_target_refresh_rate());
+        printf("[Web Timing] Using requestAnimationFrame (fps=0), delays disabled\n");
+        printf("[Web Timing] Game logic gated to %d Hz, rendering at display rate\n", FRAMERATE);
+    }
+
+    f64 now = clock_elapsed_f64();
+    f64 dt = now - sWebLastTime;
+    sWebLastTime = now;
+
+    // Clamp delta to avoid spiral of death (e.g. after tab was backgrounded)
+    if (dt > 4.0 * sFrameTime) {
+        dt = sFrameTime;
+    }
+
+    sWebAccumulator += dt;
+
     debug_context_reset();
     CTX_BEGIN(CTX_TOTAL);
-    WAPI.main_loop(produce_one_frame);
+
+    // Run game logic ticks at FRAMERATE (30 Hz) — may run 0 or more ticks
+    bool ranGameTick = false;
+    while (sWebAccumulator >= sFrameTime) {
+        sWebAccumulator -= sFrameTime;
+        ranGameTick = true;
+
+        // Game logic: network, interpolation prep, game loop, lua, audio
+        CTX_EXTENT(CTX_NETWORK, network_update);
+        CTX_EXTENT(CTX_INTERP, patch_interpolations_before);
+        CTX_EXTENT(CTX_GAME_LOOP, game_loop_one_iteration);
+        CTX_EXTENT(CTX_SMLUA, smlua_update);
+        if (gAudioThread.state == INVALID) {
+            CTX_EXTENT(CTX_AUDIO, buffer_audio);
+        }
+    }
+
+    // Always render one interpolation frame per rAF for smooth display.
+    // Delta is how far we are between the last game tick and the next one.
+    if (ranGameTick || gGameInited) {
+        f32 delta = (f32)(sWebAccumulator / sFrameTime);
+        delta = clamp(delta, 0.f, 1.f);
+        gRenderingInterpolated = true;
+        gRenderingDelta = delta;
+        gFramePercentage = delta;
+
+        gfx_start_frame();
+        if (!gSkipInterpolationTitleScreen) { patch_interpolations(delta); }
+        send_display_list(gGfxSPTask);
+        gfx_end_frame_render();
+        gfx_display_frame();
+        sDrawnFrames++;
+
+        gRenderingInterpolated = false;
+
+        // Update FPS counter every second
+        f64 curTime = clock_elapsed_f64();
+        if (curTime >= sFpsTimeLast + 1.0) {
+            compute_fps(curTime);
+        }
+    }
+
 #ifdef DISCORD_SDK
     discord_update();
 #endif
