@@ -7,6 +7,11 @@
 #   gmake -f Makefile.web clean-web    # Clean web build artifacts
 #   gmake -f Makefile.web -j$(nproc)   # Parallel build
 #
+# Serving locally:
+#   python3 serve_web.py               # Serve with COOP/COEP headers (port 8080)
+#   python3 serve_web.py --port 3000   # Custom port
+#   python3 serve_web.py --dir build/us_web  # Custom build directory
+#
 # Prerequisites:
 #   1. GNU Make 4.x+ ('gmake' on macOS — install via 'brew install make')
 #      The main Makefile uses the != operator which requires GNU Make 4.0+.
@@ -186,8 +191,10 @@ web: lua-web
 	@echo "         $(BUILD_DIR_WEB)/sm64coopdx.wasm"
 	@echo ""
 	@echo " To test locally:"
-	@echo "   cd $(BUILD_DIR_WEB) && python3 -m http.server 8080"
+	@echo "   python3 serve_web.py"
 	@echo "   Open http://localhost:8080/sm64coopdx.html"
+	@echo ""
+	@echo " (serve_web.py adds COOP/COEP headers for SharedArrayBuffer support)"
 	@echo "=========================================="
 
 clean-web: clean-lua-web
