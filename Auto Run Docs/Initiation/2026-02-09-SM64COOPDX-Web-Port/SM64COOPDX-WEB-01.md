@@ -145,7 +145,7 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   >
   > Verified: Isolated compilation tests pass — web path functions return correct values (`"/save"`, `"/"`, `"/sm64coopdx"`), and the `fs_init` web mkdir guard correctly creates missing directories.
 
-- [ ] Create a build verification script `build_web.sh` in the project root that:
+- [x] Create a build verification script `build_web.sh` in the project root that:
   - Checks if `emsdk` is installed and activated (checks for `emcc` in PATH)
   - Checks if `baserom.us.z64` exists in the expected location
   - Checks if Python 3 is available
@@ -153,3 +153,28 @@ This phase establishes the core Emscripten/WASM build infrastructure for sm64coo
   - Prints helpful error messages if prerequisites are missing
   - Make it executable with `chmod +x`
   - This script is for developer convenience and CI purposes
+
+  > **Completed 2026-02-09:** Created `build_web.sh` in the project root (180 lines, `chmod +x`). The script provides:
+  >
+  > **Prerequisite checks** (all run before any build action):
+  > - `emcc` — Emscripten C compiler with version display; includes install instructions if missing
+  > - `em++` — Emscripten C++ compiler
+  > - `emar` — Emscripten archiver
+  > - `baserom.us.z64` — ROM file with size validation
+  > - `python3` — Required for asset extraction, with version display
+  > - `make` — Build tool with version display
+  > - Each check provides actionable error messages with platform-specific install instructions
+  >
+  > **Build options** via command-line flags:
+  > - `--clean` — Only clean web build artifacts (no build)
+  > - `--no-clean` — Build without cleaning first
+  > - `--help` / `-h` — Usage information
+  > - Default (no flags): clean + build
+  >
+  > **Build execution**:
+  > - Auto-detects CPU core count (`nproc` on Linux, `sysctl` on macOS, fallback to 4)
+  > - Runs `make -f Makefile.web clean-web` then `make -f Makefile.web -j<cores>`
+  > - Uses `set -euo pipefail` for strict error handling
+  > - Color-coded output (`[INFO]`, `[OK]`, `[WARN]`, `[ERROR]`) with terminal detection
+  >
+  > Verified: `bash -n` syntax check passes, `--help` displays correctly, prerequisite checker correctly identifies missing emsdk tools and finds present tools (baserom, python3, make) with proper exit codes.
