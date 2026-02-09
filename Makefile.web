@@ -114,6 +114,7 @@ WEB_LDFLAGS := \
 	--preload-file $(BUILD_DIR_WEB)/dynos@/dynos \
 	--shell-file src/pc/web/shell.html \
 	-lidbfs.js \
+	-lwebsocket.js \
 	-L$(LUA_WEB_DIR) -l:liblua53.a
 
 # Variables passed to the main Makefile

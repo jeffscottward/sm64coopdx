@@ -1,0 +1,84 @@
+# Phase 07: Multiplayer via WebSocket Network Backend
+
+This phase implements multiplayer support for the web port by creating a new `NetworkSystem` backend that uses WebSockets instead of raw UDP sockets. Since browsers cannot create UDP sockets, a WebSocket relay server bridges the gap — web clients connect to the relay via WebSockets, and the relay can either forward to other WebSocket clients (web-to-web play) or translate to UDP for connecting to native desktop hosts. This brings the core multiplayer experience to the browser.
+
+## Tasks
+
+- [x] Create the WebSocket network system backend `src/pc/network/websocket/network_websocket.c`:
+  - Implement the `NetworkSystem` interface (defined in `src/pc/network/network.h`):
+    - `initialize()` — open a WebSocket connection to a relay server URL
+    - `get_id()` / `get_id_str()` — return a unique client ID from the WebSocket session
+    - `send()` — send packet data as a WebSocket binary message
+    - `update()` — poll for incoming WebSocket messages and dispatch to the network packet handler
+    - `shutdown()` — close the WebSocket connection
+    - Other functions: `save_id`, `clear_id`, `dup_addr`, `match_addr`, `get_lobby_id`, `get_lobby_secret`
+  - For Emscripten, use the `emscripten_websocket_*` API (from `<emscripten/websocket.h>`):
+    - `emscripten_websocket_new()` — create a WebSocket
+    - `emscripten_websocket_set_onmessage_callback()` — receive messages
+    - `emscripten_websocket_send_binary()` — send binary data
+    - `emscripten_websocket_close()` — close connection
+    - `emscripten_websocket_delete()` — cleanup
+  - Buffer incoming messages in a queue for the `update()` function to process
+  - Add `NS_WEBSOCKET` to the `NetworkSystemType` enum in `network.h`
+  - Register it in the network system selection code
+  - Create corresponding header `src/pc/network/websocket/network_websocket.h`
+  - Guard with `#ifdef TARGET_WEB` so it only compiles for web builds
+
+  **Completion Notes (2026-02-09):**
+  - Created `src/pc/network/websocket/network_websocket.h` — header declaring `gNetworkSystemWebSocket`, guarded with `#ifdef TARGET_WEB`
+  - Created `src/pc/network/websocket/network_websocket.c` — full `NetworkSystem` implementation using Emscripten's `emscripten_websocket_*` API:
+    - `ns_websocket_initialize()` creates a WebSocket via `emscripten_websocket_new()` connecting to the configurable relay URL
+    - `ws_on_message()` callback buffers incoming binary messages in a circular queue (`WS_MSG_QUEUE_SIZE=128`), extracting the 1-byte client index header
+    - `ns_websocket_update()` drains the queue and dispatches via `network_receive()`
+    - `ns_websocket_send()` prepends target client index byte and sends via `emscripten_websocket_send_binary()`
+    - `ns_websocket_shutdown()` gracefully closes and deletes the WebSocket
+    - All other interface functions (`get_id`, `get_id_str`, `save_id`, `clear_id`, `dup_addr`, `match_addr`, `get_lobby_id`, `get_lobby_secret`) implemented following the coopnet pattern with s64 client IDs
+  - Added `NS_WEBSOCKET` to `NetworkSystemType` enum in `network.h` (guarded with `#ifdef TARGET_WEB`)
+  - Registered `NS_WEBSOCKET` in `network_set_system()`, `network_reconnect_begin()`, and `network_reconnect_update()` in `network.c`
+  - Added `src/pc/network/websocket` to `SRC_DIRS` in `Makefile` (line 519)
+  - Added `-lwebsocket.js` to `WEB_LDFLAGS` in `Makefile.web` for Emscripten WebSocket library linking
+  - Added `configWebSocketRelay` config variable to `configfile.h`/`configfile.c` with default `ws://localhost:8765` and config table entry `websocket_relay`
+  - `.requireServerBroadcast = true` — relay server handles message routing
+  - Build verified: all 552+ source files compile and link successfully with emcc/em++
+
+- [ ] Create a WebSocket relay server (`tools/web_relay/`):
+  - Build a lightweight Node.js WebSocket server using the `ws` library:
+    - `tools/web_relay/server.js` — main server file
+    - `tools/web_relay/package.json` — dependencies (just `ws`)
+  - The server manages "rooms" (lobbies):
+    - A host creates a room and gets a room code
+    - Clients join by room code
+    - All messages from one client are broadcast to all others in the room
+  - Message format: prepend a 1-byte client index header to the raw game packet data
+  - Support configurable port (default 8765) and max players per room (16, matching the game)
+  - Add basic rate limiting and connection limits
+  - Include a simple health check endpoint at `/health`
+  - Document usage in a README in the relay directory
+
+- [ ] Integrate the WebSocket backend into the game's network selection UI:
+  - Read `src/pc/djui/djui_panel.c` and related DJUI panel files to understand the host/join UI
+  - For web builds, modify the network system selection:
+    - Remove Socket and CoopNet options (they don't work in browsers)
+    - Default to WebSocket backend (`NS_WEBSOCKET`)
+    - The "Host" option should start a WebSocket room via the relay server
+    - The "Join" option should connect to a room by entering a room code
+  - Update `src/pc/djui/djui_panel_join_message.c` (or equivalent) to show a room code input field instead of IP:port
+  - Update `src/pc/djui/djui_panel_host_message.c` (or equivalent) to display the room code after hosting
+
+- [ ] Handle the relay server URL configuration:
+  - Add a config option `configWebSocketRelay` to `src/pc/configfile.c` for the relay server URL (default: `ws://localhost:8765`)
+  - For production, this would point to a publicly hosted relay server
+  - Add an environment variable override: `SM64_WS_RELAY` that can be baked in at build time
+  - In the DJUI settings panel, add a field to configure the relay URL
+
+- [ ] Test multiplayer connectivity:
+  - Start the relay server: `cd tools/web_relay && npm install && node server.js`
+  - Open two browser tabs/windows with the web build
+  - Host a game in one tab, join from the other using the room code
+  - Verify:
+    - Both players see each other in the game
+    - Movement is synchronized
+    - Chat messages work
+    - Player interactions work (bumping, PvP if enabled)
+  - Document any latency or sync issues in `docs/research/web-multiplayer-testing.md` with front matter:
+    - type: report, tags: [multiplayer, websocket, networking, testing]

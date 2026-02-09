@@ -162,6 +162,8 @@ extern char         configCoopNetIp[MAX_CONFIG_STRING];
 extern unsigned int configCoopNetPort;
 extern char         configPassword[MAX_CONFIG_STRING];
 extern char         configDestId[MAX_CONFIG_STRING];
+// WebSocket settings
+extern char         configWebSocketRelay[MAX_CONFIG_STRING];
 // DJUI settings
 extern unsigned int configDjuiTheme;
 extern bool         configDjuiThemeCenter;

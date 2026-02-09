@@ -1,5 +1,8 @@
 #include "socket/socket.h"
 #include "coopnet/coopnet.h"
+#ifdef TARGET_WEB
+#include "websocket/network_websocket.h"
+#endif
 #include <stdio.h>
 #include "network.h"
 #include "object_fields.h"
@@ -101,6 +104,9 @@ void network_set_system(enum NetworkSystemType nsType) {
         case NS_SOCKET:  gNetworkSystem = &gNetworkSystemSocket; break;
 #ifdef COOPNET
         case NS_COOPNET: gNetworkSystem = &gNetworkSystemCoopNet; break;
+#endif
+#ifdef TARGET_WEB
+        case NS_WEBSOCKET: gNetworkSystem = &gNetworkSystemWebSocket; break;
 #endif
         default: gNetworkSystem = &gNetworkSystemSocket; LOG_ERROR("Unknown network system: %d", nsType); break;
     }
@@ -460,7 +466,11 @@ void network_reconnect_begin(void) {
 
     sNetworkReconnectTimer = 2 * 30;
 
-#ifdef COOPNET
+#ifdef TARGET_WEB
+    sNetworkReconnectType = (gNetworkSystem == &gNetworkSystemWebSocket)
+                          ? NS_WEBSOCKET
+                          : NS_SOCKET;
+#elif defined(COOPNET)
     sNetworkReconnectType = (gNetworkSystem == &gNetworkSystemCoopNet)
                           ? NS_COOPNET
                           : NS_SOCKET;
@@ -482,6 +492,11 @@ static void network_reconnect_update(void) {
     } else if (sNetworkReconnectType == NS_COOPNET) {
         network_set_system(NS_COOPNET);
     }
+#ifdef TARGET_WEB
+    else if (sNetworkReconnectType == NS_WEBSOCKET) {
+        network_set_system(NS_WEBSOCKET);
+    }
+#endif
 
     network_init(NT_CLIENT, true);
 

@@ -198,6 +198,8 @@ char         configCoopNetIp[MAX_CONFIG_STRING]   = DEFAULT_COOPNET_IP;
 unsigned int configCoopNetPort                    = DEFAULT_COOPNET_PORT;
 char         configPassword[MAX_CONFIG_STRING]    = "";
 char         configDestId[MAX_CONFIG_STRING]      = "0";
+// WebSocket settings
+char         configWebSocketRelay[MAX_CONFIG_STRING] = "ws://localhost:8765";
 // DJUI settings
 unsigned int configDjuiTheme                      = DJUI_THEME_DARK;
 #ifdef HANDHELD
@@ -357,6 +359,8 @@ static const struct ConfigOption options[] = {
     {.name = "coopnet_port",                   .type = CONFIG_TYPE_UINT,   .uintValue   = &configCoopNetPort},
     {.name = "coopnet_password",               .type = CONFIG_TYPE_STRING, .stringValue = (char*)&configPassword, .maxStringLength = MAX_CONFIG_STRING},
     {.name = "coopnet_dest",                   .type = CONFIG_TYPE_STRING, .stringValue = (char*)&configDestId, .maxStringLength = MAX_CONFIG_STRING},
+    // WebSocket settings
+    {.name = "websocket_relay",                .type = CONFIG_TYPE_STRING, .stringValue = (char*)&configWebSocketRelay, .maxStringLength = MAX_CONFIG_STRING},
     // DJUI settings
     {.name = "djui_theme",                     .type = CONFIG_TYPE_UINT,   .uintValue   = &configDjuiTheme},
     {.name = "djui_theme_center",              .type = CONFIG_TYPE_BOOL,   .boolValue   = &configDjuiThemeCenter},
