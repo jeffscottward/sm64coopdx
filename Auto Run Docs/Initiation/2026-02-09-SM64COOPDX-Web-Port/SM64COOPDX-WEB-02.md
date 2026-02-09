@@ -74,9 +74,18 @@ This phase adapts the OpenGL rendering backend to work with WebGL 2.0 via Emscri
   > 13. **No `malloc`/`free`/`mmap`/`sleep`/`usleep`**: All data is statically allocated or stack-local. No platform-specific system calls.
   > 14. **No `#ifdef __EMSCRIPTEN__` blocks needed**: The file is entirely platform-agnostic through its use of the rendering API abstraction layer.
 
-- [ ] Create `src/pc/gfx/gfx_web_util.h` with helper macros and functions for web rendering:
+- [x] Create `src/pc/gfx/gfx_web_util.h` with helper macros and functions for web rendering:
   - Provide canvas resize utility that syncs the HTML5 canvas size with the CSS display size (prevents blurry rendering)
   - Provide a function to get the device pixel ratio for HiDPI/Retina displays: `EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; })`
   - Provide WebGL context loss handling: register a callback for `webglcontextlost` and `webglcontextrestored` events
   - This file should only be included when `__EMSCRIPTEN__` is defined
   - Keep it minimal — only add what's actually needed for compilation to succeed
+
+  > **Completed** — Created `src/pc/gfx/gfx_web_util.h` (131 lines). All functions are `static inline` and the entire file is wrapped in `#ifdef __EMSCRIPTEN__` / `#endif`. Contents:
+  > 1. **`gfx_web_get_device_pixel_ratio()`**: Returns `window.devicePixelRatio` via `EM_ASM_DOUBLE`, falling back to 1.0.
+  > 2. **`gfx_web_sync_canvas_size(selector)`**: Uses `EM_ASM_INT` to measure the canvas CSS layout size, multiply by devicePixelRatio, and resize the canvas `width`/`height` attributes if they differ. Returns true if resized. Prevents blurry rendering on HiDPI/Retina displays.
+  > 3. **`gfx_web_is_context_lost()`**: Returns the current context-lost flag.
+  > 4. **`gfx_web_on_context_lost()`**: Emscripten callback for `webglcontextlost` — sets flag, returns `EM_TRUE` to call `preventDefault()` (allows browser to auto-restore).
+  > 5. **`gfx_web_on_context_restored()`**: Emscripten callback for `webglcontextrestored` — clears flag.
+  > 6. **`gfx_web_register_context_handlers(selector)`**: Registers both context loss/restore callbacks via `emscripten_set_webglcontextlost_callback` and `emscripten_set_webglcontextrestored_callback`.
+  > 7. **Validation**: Native build (no `__EMSCRIPTEN__`) compiles to empty — verified with `-Wall -Wextra -Werror`. Emscripten path verified with stub headers — all functions compile, link, and context-loss flag transitions tested.
