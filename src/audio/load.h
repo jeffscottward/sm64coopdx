@@ -90,6 +90,10 @@ void patch_audio_bank(s32 bankId, struct AudioBank *mem, struct PatchStruct *pat
 #else
 void patch_audio_bank(struct AudioBank *mem, u8 *offset, u32 numInstruments, u32 numDrums);
 #endif
+#include "platform_info.h"
+#if !IS_64_BIT
+void repack_bank_data_from_64bit(u8 *bankData, u32 dataSize, u32 numInstruments, u32 numDrums);
+#endif
 #ifndef VERSION_SH
 void preload_sequence(u32 seqId, u8 preloadMask);
 #endif

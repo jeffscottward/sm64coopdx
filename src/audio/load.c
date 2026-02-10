@@ -1282,6 +1282,466 @@ void func_sh_802f3ed4(UNUSED s32 arg0, UNUSED s32 arg1, UNUSED void *vAddr, UNUS
 }
 #endif
 
+/**
+ * Repack audio bank data from 64-bit struct layout to 32-bit struct layout.
+ *
+ * The .ctl binary data is generated with 64-bit pointer sizes (8 bytes per pointer,
+ * structs padded to 8-byte alignment). On 32-bit WASM, the C structs use 4-byte
+ * pointers, causing all fields to be at wrong offsets.
+ *
+ * This function reads the raw data using 64-bit layout knowledge and writes it
+ * back compacted to 32-bit layout, updating all internal relative offsets.
+ *
+ * Only needed on 32-bit platforms (WASM). On 64-bit, this is a no-op.
+ */
+#if !IS_64_BIT
+
+/* 64-bit struct sizes */
+#define SZ64_PTR         8
+#define SZ64_AUDIOBANKHEADER(numInstr) (SZ64_PTR + SZ64_PTR * (numInstr))
+#define SZ64_DRUM        32  /* 3 u8 + 5 pad + AudioBankSound(16) + envelope_ptr(8) */
+#define SZ64_INSTRUMENT  64  /* 4 u8 + 4 pad + envelope_ptr(8) + 3*AudioBankSound(16) */
+#define SZ64_AUDIOBANKSOUND 16  /* sample_ptr(8) + tuning(4) + pad(4) */
+#define SZ64_AUDIOBANKSAMPLE 40 /* unused(1)+loaded(1)+pad(6)+sampleAddr(8)+loop(8)+book(8)+sampleSize(4)+pad(4) */
+#define SZ64_DRUMPTRS(numDrums) (SZ64_PTR * (numDrums))
+
+/* 32-bit struct sizes */
+#define SZ32_PTR         4
+#define SZ32_AUDIOBANKHEADER(numInstr) (SZ32_PTR + SZ32_PTR * (numInstr))
+#define SZ32_DRUM        16  /* 3 u8 + 1 pad + AudioBankSound(8) + envelope_ptr(4) */
+#define SZ32_INSTRUMENT  32  /* 4 u8 + envelope_ptr(4) + 3*AudioBankSound(8) */
+#define SZ32_AUDIOBANKSOUND 8  /* sample_ptr(4) + tuning(4) */
+#define SZ32_AUDIOBANKSAMPLE 20 /* unused(1)+loaded(1)+pad(2)+sampleAddr(4)+loop(4)+book(4)+sampleSize(4) */
+#define SZ32_DRUMPTRS(numDrums) (SZ32_PTR * (numDrums))
+
+/* Maximum number of offset remapping entries */
+#define MAX_REMAP_ENTRIES 512
+
+struct OffsetRemap {
+    u32 old_offset;
+    u32 new_offset;
+};
+
+static u32 remap_offset(struct OffsetRemap *table, s32 count, u32 old_off) {
+    for (s32 j = 0; j < count; j++) {
+        if (table[j].old_offset == old_off) {
+            return table[j].new_offset;
+        }
+    }
+    /* If not found, return as-is (could be 0/NULL or a non-struct offset like envelopes/loops/books) */
+    return old_off;
+}
+
+static u32 read_u32_le(const u8 *p) {
+    return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+}
+
+static void write_u32_le(u8 *p, u32 v) {
+    p[0] = (u8)(v);
+    p[1] = (u8)(v >> 8);
+    p[2] = (u8)(v >> 16);
+    p[3] = (u8)(v >> 24);
+}
+
+static f32 read_f32_le(const u8 *p) {
+    u32 bits = read_u32_le(p);
+    f32 result;
+    memcpy(&result, &bits, sizeof(f32));
+    return result;
+}
+
+static void write_f32_le(u8 *p, f32 v) {
+    u32 bits;
+    memcpy(&bits, &v, sizeof(u32));
+    write_u32_le(p, bits);
+}
+
+/* Read a 64-bit pointer field (lower 32 bits only — upper 32 are always 0 for relative offsets) */
+static u32 read_ptr64(const u8 *p) {
+    return read_u32_le(p);  /* Little-endian: low 4 bytes contain the value */
+}
+
+/* Raw data remap table type and lookup used during bank repack */
+struct RawRemap { u32 old_off; u32 new_off; u32 size; };
+
+static u32 raw_remap_lookup(struct RawRemap *table, s32 count, u32 off) {
+    for (s32 r = 0; r < count; r++) {
+        if (table[r].old_off == off) return table[r].new_off;
+    }
+    return off; /* not found — return as-is */
+}
+
+void repack_bank_data_from_64bit(u8 *bankData, u32 dataSize, u32 numInstruments, u32 numDrums) {
+    /* Make a temporary copy of the original 64-bit layout data */
+    u8 *tmp = malloc(dataSize);
+    if (!tmp) return;
+    memcpy(tmp, bankData, dataSize);
+
+    /* Output buffer — start clean so no stale data leaks through */
+    u8 *out = calloc(1, dataSize);
+    if (!out) { free(tmp); return; }
+
+    struct OffsetRemap remap[MAX_REMAP_ENTRIES];
+    s32 remapCount = 0;
+
+    /* ================================================================== */
+    /* Phase 1: Assign new 32-bit positions for ALL struct objects         */
+    /* ================================================================== */
+
+    u32 writePos = 0;
+
+    /* AudioBank header: drums ptr + instrument ptrs */
+    u32 hdrSize32 = SZ32_AUDIOBANKHEADER(numInstruments);
+    writePos = hdrSize32;
+
+    /* Read drums pointer and all instrument pointers from 64-bit layout */
+    u32 drumsOff64 = read_ptr64(tmp + 0);
+    u32 instrOffs64[256];
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        instrOffs64[k] = read_ptr64(tmp + SZ64_PTR + k * SZ64_PTR);
+    }
+
+    u32 drumPtrsOff32 = 0;
+    u32 drumPtrsOff64 = drumsOff64;
+    u32 drumOffs64[256];
+    memset(drumOffs64, 0, sizeof(drumOffs64));
+
+    if (drumsOff64 != 0 && numDrums > 0) {
+        /* Remap the drum pointer array */
+        if (remapCount < MAX_REMAP_ENTRIES) {
+            remap[remapCount].old_offset = drumPtrsOff64;
+            remap[remapCount].new_offset = writePos;
+            drumPtrsOff32 = writePos;
+            remapCount++;
+        }
+        writePos += SZ32_DRUMPTRS(numDrums);
+
+        /* Read individual drum offsets from the 64-bit drum pointer array */
+        for (u32 k = 0; k < numDrums && k < 256; k++) {
+            drumOffs64[k] = read_ptr64(tmp + drumPtrsOff64 + k * SZ64_PTR);
+        }
+
+        /* Remap each individual drum */
+        for (u32 k = 0; k < numDrums && k < 256; k++) {
+            if (drumOffs64[k] != 0) {
+                if (remapCount < MAX_REMAP_ENTRIES) {
+                    remap[remapCount].old_offset = drumOffs64[k];
+                    remap[remapCount].new_offset = writePos;
+                    remapCount++;
+                }
+                writePos += SZ32_DRUM;
+            }
+        }
+    }
+
+    /* Remap each instrument */
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        if (instrOffs64[k] != 0) {
+            if (remapCount < MAX_REMAP_ENTRIES) {
+                remap[remapCount].old_offset = instrOffs64[k];
+                remap[remapCount].new_offset = writePos;
+                remapCount++;
+            }
+            writePos += SZ32_INSTRUMENT;
+        }
+    }
+
+    /* Collect AudioBankSample offsets from drums */
+    for (u32 k = 0; k < numDrums && k < 256; k++) {
+        if (drumOffs64[k] != 0) {
+            u32 sampleOff = read_ptr64(tmp + drumOffs64[k] + 8);
+            if (sampleOff != 0) {
+                s32 found = 0;
+                for (s32 j = 0; j < remapCount; j++) {
+                    if (remap[j].old_offset == sampleOff) { found = 1; break; }
+                }
+                if (!found && remapCount < MAX_REMAP_ENTRIES) {
+                    remap[remapCount].old_offset = sampleOff;
+                    remap[remapCount].new_offset = writePos;
+                    remapCount++;
+                    writePos += SZ32_AUDIOBANKSAMPLE;
+                }
+            }
+        }
+    }
+
+    /* Collect AudioBankSample offsets from instruments (3 sounds each) */
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        if (instrOffs64[k] != 0) {
+            u32 soundOffsets[3] = { 16, 32, 48 };
+            for (s32 s = 0; s < 3; s++) {
+                u32 sampleOff = read_ptr64(tmp + instrOffs64[k] + soundOffsets[s]);
+                if (sampleOff != 0) {
+                    s32 found = 0;
+                    for (s32 j = 0; j < remapCount; j++) {
+                        if (remap[j].old_offset == sampleOff) { found = 1; break; }
+                    }
+                    if (!found && remapCount < MAX_REMAP_ENTRIES) {
+                        remap[remapCount].old_offset = sampleOff;
+                        remap[remapCount].new_offset = writePos;
+                        remapCount++;
+                        writePos += SZ32_AUDIOBANKSAMPLE;
+                    }
+                }
+            }
+        }
+    }
+
+    /* Record where struct data ends — raw data goes after this */
+    u32 structEnd = writePos;
+
+    /* ================================================================== */
+    /* Phase 2: Collect and relocate raw data (envelopes, loops, books)    */
+    /* These have no pointer fields and identical layout on 32/64-bit,     */
+    /* but they MUST be moved because compacted struct data now occupies   */
+    /* the byte ranges where raw data originally sat.                      */
+    /* ================================================================== */
+
+    /* We track unique raw data offsets so we don't copy the same blob twice */
+    #define MAX_RAW_ENTRIES 512
+    struct RawRemap rawData[MAX_RAW_ENTRIES];
+    s32 rawCount = 0;
+
+    /* Helper: add a raw data entry if not already present, return its new offset */
+    #define ADD_RAW(off, sz) do { \
+        if ((off) != 0 && (off) < dataSize) { \
+            s32 _found = 0; \
+            for (s32 _r = 0; _r < rawCount; _r++) { \
+                if (rawData[_r].old_off == (off)) { _found = 1; break; } \
+            } \
+            if (!_found && rawCount < MAX_RAW_ENTRIES) { \
+                rawData[rawCount].old_off = (off); \
+                rawData[rawCount].new_off = writePos; \
+                rawData[rawCount].size = (sz); \
+                rawCount++; \
+                writePos += (sz); \
+            } \
+        } \
+    } while(0)
+
+    /* Collect envelope offsets from drums */
+    for (u32 k = 0; k < numDrums && k < 256; k++) {
+        if (drumOffs64[k] != 0) {
+            u32 envOff = read_ptr64(tmp + drumOffs64[k] + 24);
+            if (envOff != 0 && envOff < dataSize) {
+                /* Walk envelope to find size: sequence of {delay:s16, arg:s16} ending with delay<=0 */
+                u32 envSize = 0;
+                u32 pos = envOff;
+                while (pos + 4 <= dataSize) {
+                    s16 delay = (s16)((u16)tmp[pos] | ((u16)tmp[pos+1] << 8));
+                    envSize += 4;
+                    pos += 4;
+                    if (delay <= 0) break;
+                    if (envSize > 256) break; /* safety limit */
+                }
+                if (envSize > 0) ADD_RAW(envOff, envSize);
+            }
+        }
+    }
+
+    /* Collect envelope offsets from instruments */
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        if (instrOffs64[k] != 0) {
+            u32 envOff = read_ptr64(tmp + instrOffs64[k] + 8);
+            if (envOff != 0 && envOff < dataSize) {
+                u32 envSize = 0;
+                u32 pos = envOff;
+                while (pos + 4 <= dataSize) {
+                    s16 delay = (s16)((u16)tmp[pos] | ((u16)tmp[pos+1] << 8));
+                    envSize += 4;
+                    pos += 4;
+                    if (delay <= 0) break;
+                    if (envSize > 256) break;
+                }
+                if (envSize > 0) ADD_RAW(envOff, envSize);
+            }
+        }
+    }
+
+    /* Identify which remap entries are AudioBankSample (entries after drums+instruments) */
+    s32 sampleStartIdx = 0;
+    if (drumsOff64 != 0 && numDrums > 0) {
+        sampleStartIdx++; /* drum ptr array */
+        for (u32 k = 0; k < numDrums && k < 256; k++) {
+            if (drumOffs64[k] != 0) sampleStartIdx++;
+        }
+    }
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        if (instrOffs64[k] != 0) sampleStartIdx++;
+    }
+
+    /* Collect loop and book offsets from all AudioBankSample entries */
+    for (s32 j = sampleStartIdx; j < remapCount; j++) {
+        u32 sOff = remap[j].old_offset;
+        if (sOff + SZ64_AUDIOBANKSAMPLE > dataSize) continue;
+
+        /* Loop: offset at byte 16 in 64-bit AudioBankSample */
+        u32 loopOff = read_ptr64(tmp + sOff + 16);
+        if (loopOff != 0 && loopOff < dataSize) {
+            /* AdpcmLoop: start(4)+end(4)+count(4)+pad(4) = 16 bytes base.
+             * If count != 0, add state[16] = 32 more bytes → 48 total */
+            u32 loopCount = read_u32_le(tmp + loopOff + 8);
+            u32 loopSize = (loopCount != 0) ? 48 : 16;
+            ADD_RAW(loopOff, loopSize);
+        }
+
+        /* Book: offset at byte 24 in 64-bit AudioBankSample */
+        u32 bookOff = read_ptr64(tmp + sOff + 24);
+        if (bookOff != 0 && bookOff < dataSize) {
+            /* AdpcmBook: order(4)+npredictors(4)+book[8*order*npredictors*2 bytes] */
+            s32 order = (s32)read_u32_le(tmp + bookOff);
+            s32 npred = (s32)read_u32_le(tmp + bookOff + 4);
+            if (order < 0 || order > 16) order = 2; /* sanity */
+            if (npred < 0 || npred > 16) npred = 2;
+            u32 bookSize = 8 + (u32)(8 * order * npred) * 2;
+            /* Align to 8 bytes */
+            bookSize = (bookSize + 7) & ~7u;
+            ADD_RAW(bookOff, bookSize);
+        }
+    }
+
+    #undef ADD_RAW
+
+    /* Check that all data fits within the original allocation */
+    if (writePos > dataSize) {
+#ifdef __EMSCRIPTEN__
+        printf("[Web Audio] WARN: repack writePos=%u > dataSize=%u, raw data may be truncated\n",
+               writePos, dataSize);
+#endif
+    }
+
+    /* ================================================================== */
+    /* Phase 3: Write everything into the clean output buffer              */
+    /* ================================================================== */
+
+    /* Helper: look up raw data new offset (linear scan — small arrays) */
+
+    /* Write AudioBank header */
+    if (drumsOff64 != 0 && numDrums > 0) {
+        write_u32_le(out + 0, drumPtrsOff32);
+    } else {
+        write_u32_le(out + 0, 0);
+    }
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        u32 newOff = (instrOffs64[k] != 0) ? remap_offset(remap, remapCount, instrOffs64[k]) : 0;
+        write_u32_le(out + SZ32_PTR + k * SZ32_PTR, newOff);
+    }
+
+    /* Write drum pointer array and drum structs */
+    if (drumsOff64 != 0 && numDrums > 0) {
+        for (u32 k = 0; k < numDrums && k < 256; k++) {
+            u32 newOff = (drumOffs64[k] != 0) ? remap_offset(remap, remapCount, drumOffs64[k]) : 0;
+            write_u32_le(out + drumPtrsOff32 + k * SZ32_PTR, newOff);
+        }
+
+        for (u32 k = 0; k < numDrums && k < 256; k++) {
+            if (drumOffs64[k] != 0) {
+                const u8 *src = tmp + drumOffs64[k];
+                u32 dstOff = remap_offset(remap, remapCount, drumOffs64[k]);
+                u8 *dst = out + dstOff;
+
+                dst[0] = src[0]; /* releaseRate */
+                dst[1] = src[1]; /* pan */
+                dst[2] = src[2]; /* loaded */
+                dst[3] = 0;
+
+                u32 sampleOff = read_ptr64(src + 8);
+                u32 newSampleOff = (sampleOff != 0) ? remap_offset(remap, remapCount, sampleOff) : 0;
+                write_u32_le(dst + 4, newSampleOff);
+
+                f32 tuning = read_f32_le(src + 16);
+                write_f32_le(dst + 8, tuning);
+
+                u32 envOff = read_ptr64(src + 24);
+                u32 newEnvOff = raw_remap_lookup(rawData, rawCount, envOff);
+                write_u32_le(dst + 12, newEnvOff);
+            }
+        }
+    }
+
+    /* Write instrument structs */
+    for (u32 k = 0; k < numInstruments && k < 256; k++) {
+        if (instrOffs64[k] != 0) {
+            const u8 *src = tmp + instrOffs64[k];
+            u32 dstOff = remap_offset(remap, remapCount, instrOffs64[k]);
+            u8 *dst = out + dstOff;
+
+            dst[0] = src[0]; /* loaded */
+            dst[1] = src[1]; /* normalRangeLo */
+            dst[2] = src[2]; /* normalRangeHi */
+            dst[3] = src[3]; /* releaseRate */
+
+            u32 envOff = read_ptr64(src + 8);
+            u32 newEnvOff = raw_remap_lookup(rawData, rawCount, envOff);
+            write_u32_le(dst + 4, newEnvOff);
+
+            u32 lowSample = read_ptr64(src + 16);
+            u32 newLowSample = (lowSample != 0) ? remap_offset(remap, remapCount, lowSample) : 0;
+            write_u32_le(dst + 8, newLowSample);
+            write_f32_le(dst + 12, read_f32_le(src + 24));
+
+            u32 normSample = read_ptr64(src + 32);
+            u32 newNormSample = (normSample != 0) ? remap_offset(remap, remapCount, normSample) : 0;
+            write_u32_le(dst + 16, newNormSample);
+            write_f32_le(dst + 20, read_f32_le(src + 40));
+
+            u32 highSample = read_ptr64(src + 48);
+            u32 newHighSample = (highSample != 0) ? remap_offset(remap, remapCount, highSample) : 0;
+            write_u32_le(dst + 24, newHighSample);
+            write_f32_le(dst + 28, read_f32_le(src + 56));
+        }
+    }
+
+    /* Write AudioBankSample structs */
+    for (s32 j = sampleStartIdx; j < remapCount; j++) {
+        u32 oldOff = remap[j].old_offset;
+        u32 newOff = remap[j].new_offset;
+        const u8 *src = tmp + oldOff;
+        u8 *dst = out + newOff;
+
+        dst[0] = src[0]; /* unused */
+        dst[1] = src[1]; /* loaded */
+        dst[2] = 0;
+        dst[3] = 0;
+
+        u32 sampleAddr = read_ptr64(src + 8);
+        write_u32_le(dst + 4, sampleAddr);  /* sampleAddr — points into .tbl, not remapped */
+
+        u32 loopOff = read_ptr64(src + 16);
+        u32 newLoopOff = raw_remap_lookup(rawData, rawCount, loopOff);
+        write_u32_le(dst + 8, newLoopOff);
+
+        u32 bookOff = read_ptr64(src + 24);
+        u32 newBookOff = raw_remap_lookup(rawData, rawCount, bookOff);
+        write_u32_le(dst + 12, newBookOff);
+
+        u32 sampleSize = read_u32_le(src + 32);
+        write_u32_le(dst + 16, sampleSize);
+    }
+
+    /* Copy raw data blobs (envelopes, loops, books) to their new positions */
+    for (s32 r = 0; r < rawCount; r++) {
+        u32 srcOff = rawData[r].old_off;
+        u32 dstOff = rawData[r].new_off;
+        u32 sz = rawData[r].size;
+        if (srcOff + sz <= dataSize && dstOff + sz <= dataSize) {
+            memcpy(out + dstOff, tmp + srcOff, sz);
+        }
+    }
+
+    /* Copy the fully-built 32-bit layout back to the original buffer */
+    memcpy(bankData, out, dataSize);
+    free(out);
+    free(tmp);
+
+#ifdef __EMSCRIPTEN__
+    printf("[Web Audio] repack: %d structs, %d raw blobs, structEnd=%u rawEnd=%u dataSize=%u\n",
+           remapCount, rawCount, structEnd, writePos, dataSize);
+#endif
+}
+
+#endif /* !IS_64_BIT */
+
 #ifndef VERSION_SH
 struct AudioBank *bank_load_immediate(s32 bankId, s32 arg1) {
     UNUSED u32 pad1[4];
@@ -1306,6 +1766,9 @@ struct AudioBank *bank_load_immediate(s32 bankId, s32 arg1) {
     numInstruments = buf[0];
     numDrums = buf[1];
     audio_dma_copy_immediate((uintptr_t)(ctlData + 0x10), ret, alloc);
+#if !IS_64_BIT
+    repack_bank_data_from_64bit((u8 *)ret, (u32)alloc, numInstruments, numDrums);
+#endif
     patch_audio_bank(ret, gAlTbl->seqArray[bankId].offset, numInstruments, numDrums);
     gCtlEntries[bankId].numInstruments = (u8) numInstruments;
     gCtlEntries[bankId].numDrums = (u8) numDrums;
@@ -1950,6 +2413,24 @@ void audio_init() {
 #endif
     gSeqFileHeader = soundAlloc(&gAudioInitPool, size);
     audio_dma_copy_immediate((uintptr_t) data, gSeqFileHeader, size);
+#if !IS_64_BIT
+    // On 32-bit (WASM), repack ALSeqFile entries from 64-bit data layout.
+    // The raw .ctl/.tbl/.seq data has entries at 16-byte stride (64-bit sizeof(ALSeqData))
+    // but 32-bit sizeof(ALSeqData) is 8 bytes. Read at 64-bit stride and rewrite.
+    {
+        s32 seqCount = gSeqFileHeader->seqCount;
+        for (i = 0; i < seqCount; i++) {
+            u32 rawByteOffset = 8 + (u32)i * 16;
+            u32 rawByteLen    = 16 + (u32)i * 16;
+            u32 entryOffset = 0;
+            s32 entryLen = 0;
+            memcpy(&entryOffset, data + rawByteOffset, sizeof(u32));
+            memcpy(&entryLen, data + rawByteLen, sizeof(s32));
+            gSeqFileHeader->seqArray[i].offset = (u8 *)(uintptr_t)entryOffset;
+            gSeqFileHeader->seqArray[i].len = entryLen;
+        }
+    }
+#endif
     alSeqFileNew(gSeqFileHeader, data);
 
     // Load header for CTL (assets/sound_data.ctl.s, i.e. ADSR)
@@ -1961,6 +2442,26 @@ void audio_init() {
     gCtlEntries = soundAlloc(&gAudioInitPool, gAlCtlHeader->seqCount * sizeof(struct CtlEntry));
     gAlCtlHeader = soundAlloc(&gAudioInitPool, size);
     audio_dma_copy_immediate((uintptr_t) data, gAlCtlHeader, size);
+#if !IS_64_BIT
+    // On 32-bit (WASM), the ALSeqData struct is 8 bytes but the raw .ctl data
+    // was laid out for 64-bit where ALSeqData is 16 bytes (8-byte pointer + 4-byte
+    // int + 4-byte padding). On 64-bit, struct alignment causes the correct values
+    // to be read. On 32-bit, we must manually reinterpret the raw data at 64-bit
+    // stride to extract the correct offset and len for each bank.
+    {
+        s32 seqCount = gAlCtlHeader->seqCount;
+        for (i = 0; i < seqCount; i++) {
+            u32 rawByteOffset = 8 + (u32)i * 16;
+            u32 rawByteLen    = 16 + (u32)i * 16;
+            u32 bankOffset = 0;
+            s32 bankLen = 0;
+            memcpy(&bankOffset, data + rawByteOffset, sizeof(u32));
+            memcpy(&bankLen, data + rawByteLen, sizeof(s32));
+            gAlCtlHeader->seqArray[i].offset = (u8 *)(uintptr_t)bankOffset;
+            gAlCtlHeader->seqArray[i].len = bankLen;
+        }
+    }
+#endif
     alSeqFileNew(gAlCtlHeader, data);
 
     // Load header for TBL (assets/sound_data.tbl.s, i.e. raw data)
@@ -1972,6 +2473,22 @@ void audio_init() {
 
     data = gSoundDataRaw;
     audio_dma_copy_immediate((uintptr_t) data, gAlTbl, size);
+#if !IS_64_BIT
+    // Same 32-bit repack for TBL header
+    {
+        s32 seqCount = gAlTbl->seqCount;
+        for (i = 0; i < seqCount; i++) {
+            u32 rawByteOffset = 8 + (u32)i * 16;
+            u32 rawByteLen    = 16 + (u32)i * 16;
+            u32 bankOffset = 0;
+            s32 bankLen = 0;
+            memcpy(&bankOffset, data + rawByteOffset, sizeof(u32));
+            memcpy(&bankLen, data + rawByteLen, sizeof(s32));
+            gAlTbl->seqArray[i].offset = (u8 *)(uintptr_t)bankOffset;
+            gAlTbl->seqArray[i].len = bankLen;
+        }
+    }
+#endif
     alSeqFileNew(gAlTbl, data);
 
     // Load bank sets for each sequence (assets/bank_sets.s)

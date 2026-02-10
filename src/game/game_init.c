@@ -590,9 +590,7 @@ void thread5_game_loop(UNUSED void *arg) {
     // point levelCommandAddr to the entry point into the level script data.
     levelCommandAddr = segmented_to_virtual(level_script_entry);
 
-#ifndef __EMSCRIPTEN__
     play_music(SEQ_PLAYER_SFX, SEQUENCE_ARGS(0, SEQ_SOUND_PLAYER), 0);
-#endif
     set_sound_mode(save_file_get_sound_mode());
 
     thread6_rumble_loop(NULL);

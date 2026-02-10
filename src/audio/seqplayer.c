@@ -2447,6 +2447,17 @@ void sequence_player_process_sequence(struct SequencePlayer *seqPlayer) {
         }
         if (seqPlayer->bankDmaRemaining == 0) {
             seqPlayer->bankDmaInProgress = FALSE;
+#if !IS_64_BIT
+            {
+                /* Compute alloc size same way as bank_load_async */
+                size_t bankAlloc = gAlCtlHeader->seqArray[seqPlayer->loadingBankId].len + 0xf;
+                bankAlloc = (bankAlloc + 0xF) & ~(size_t)0xF;
+                bankAlloc -= 0x10;
+                repack_bank_data_from_64bit((u8 *)seqPlayer->loadingBank, (u32)bankAlloc,
+                                            seqPlayer->loadingBankNumInstruments,
+                                            seqPlayer->loadingBankNumDrums);
+            }
+#endif
             patch_audio_bank(seqPlayer->loadingBank, gAlTbl->seqArray[seqPlayer->loadingBankId].offset,
                              seqPlayer->loadingBankNumInstruments, seqPlayer->loadingBankNumDrums);
             gCtlEntries[seqPlayer->loadingBankId].numInstruments = seqPlayer->loadingBankNumInstruments;
