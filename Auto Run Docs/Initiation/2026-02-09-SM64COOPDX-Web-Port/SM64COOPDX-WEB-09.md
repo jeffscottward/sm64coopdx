@@ -88,7 +88,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
   - Add required `#include` directives for `pc/network/version.h` and `pc/configfile.h`
   > **Completed**: `ns_websocket_send_host_command()` already included `configPlayerName`, `get_version()`, `configAmountOfPlayers`, and `isPublic:true` from a prior session. The remaining gap was the `mode` field which was hardcoded as `"Normal"` — now replaced with `mods_get_main_mod_name()` (from `pc/mods/mods.h`) which returns the largest enabled mod's name or "Super Mario 64" if no mods are enabled, matching the CoopNet implementation in `coopnet.c`. All string fields (`hostName`, `version`, `mode`) are sanitized via `ws_json_escape()`. Includes for `pc/configfile.h` and `pc/network/version.h` were already present; added `pc/mods/mods.h`. Build verified clean.
 
-- [ ] Modify the DJUI join panel to show the lobby menu on web builds (`src/pc/djui/djui_panel_join.c`):
+- [x] Modify the DJUI join panel to show the lobby menu on web builds (`src/pc/djui/djui_panel_join.c`):
   - Replace the `#ifdef TARGET_WEB` block (line 18) that bypasses to `djui_panel_join_direct_create()`
   - Instead show a panel with:
     - "Public Lobbies" button → `djui_panel_join_public_lobbies`
@@ -96,6 +96,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     - "Back" button
   - Skip "Private Lobbies" for now — the relay doesn't support password-protected room listing yet
   - Ensure the `djui_panel_join_public_lobbies` function is accessible on web builds (it's currently inside `#ifdef COOPNET`)
+  > **Completed**: All subtasks verified already implemented from a prior session. The `#ifdef TARGET_WEB` block in `djui_panel_join_create()` (lines 18-27) now shows a three-panel menu with "Public Lobbies" (→ `djui_panel_join_public_lobbies`), "Direct" (→ `djui_panel_join_direct_create`), and "Back" buttons. "Private Lobbies" is correctly excluded from web builds. The `djui_panel_join_public_lobbies` static function (line 12) is guarded by `#if defined(COOPNET) || defined(TARGET_WEB)`, making it accessible for both native and web builds. Build verified clean.
 
 - [ ] Make the lobby browser panel work with WebSocket query (`src/pc/djui/djui_panel_join_lobbies.c`):
   - Change the compile guard from `#ifdef COOPNET` to `#if defined(COOPNET) || defined(TARGET_WEB)`
