@@ -75,7 +75,8 @@ void djui_panel_join_lobby(struct DjuiBase* caller) {
     uint64_t lobbyId = (uint64_t)caller->tag;
     const char* roomCode = ns_websocket_get_lobby_code(lobbyId);
     if (!roomCode || roomCode[0] == '\0') {
-        LOG_ERROR("Could not find room code for lobbyId %llu", (unsigned long long)lobbyId);
+        // This is a CoopNet lobby — can't join from web browser
+        djui_popup_create("This lobby is hosted on the desktop app.\nUse \\#00ff00\\Host\\#ffffff\\ to create a web lobby!", 3);
         return;
     }
     ns_websocket_set_pending_join(roomCode);
@@ -111,7 +112,10 @@ void djui_panel_join_query(uint64_t aLobbyId, UNUSED uint64_t aOwnerId, uint16_t
 #ifdef TARGET_WEB
     bool isCoopNet = (strcmp(aVersion, "coopnet") == 0);
     if (isCoopNet) {
-        disabled = true;
+        // CoopNet lobbies: show as version-mismatched (red tag) but still clickable.
+        // The join handler will show an appropriate message if they can't be joined.
+        disabled = false;
+        snprintf(mode, 64, "\\#808080\\[Desktop]");
     } else
 #endif
     if (disabled) {
