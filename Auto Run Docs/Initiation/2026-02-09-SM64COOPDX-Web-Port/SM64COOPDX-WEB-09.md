@@ -50,7 +50,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
   - Add an `"update_room"` command for hosts to update their room metadata after creation (for mod changes, etc.)
   > **Completed**: All subtasks verified implemented. Room class has metadata fields with `truncStr()` sanitization. Host command extracts metadata from client JSON. `addClient()` respects room-specific `maxPlayers` capped by `MAX_PLAYERS_PER_ROOM`. List command enabled for all environments (no production guard). Room list returns rich metadata (code, hostName, version, mode, players, maxPlayers, description). Private and dead rooms filtered. `update_room` command allows host (clientIndex 0) to modify metadata post-creation. Build verified clean.
 
-- [ ] Implement the WebSocket lobby query client (`src/pc/network/websocket/network_websocket.c`):
+- [x] Implement the WebSocket lobby query client (`src/pc/network/websocket/network_websocket.c`):
   - Add `ns_websocket_query(LobbyQueryCallbackPtr callback, LobbyQueryFinishCallbackPtr finishCallback)`:
     - Opens a **dedicated query WebSocket** (separate from the game connection) to the relay URL
     - On open: sends `{"type":"list"}`
@@ -75,6 +75,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     bool ns_websocket_query(LobbyQueryCallbackPtr callback, LobbyQueryFinishCallbackPtr finishCallback);
     const char* ns_websocket_get_lobby_code(uint64_t lobbyId);
     ```
+  > **Completed**: All subtasks verified already implemented from a prior session. `ns_websocket_query()` opens a dedicated query WebSocket to the relay, sends `{"type":"list"}`, and parses the JSON `room_list` response using a custom brace-depth parser with `ws_json_get_string()`/`ws_json_get_int()` helpers. The `sLobbyCodeMap[128]` array maps hash-based lobby IDs to 6-char room codes for UI integration. `ws_json_escape()` sanitizes strings for JSON embedding. `ws_query_on_error` calls `finishCallback()` to prevent UI hangs. Header updated with `#include "pc/network/lobby_query.h"` and function declarations. Build verified clean.
 
 - [ ] Send host metadata when creating rooms (`src/pc/network/websocket/network_websocket.c`):
   - Modify `ns_websocket_send_host_command()` to include metadata in the JSON:
