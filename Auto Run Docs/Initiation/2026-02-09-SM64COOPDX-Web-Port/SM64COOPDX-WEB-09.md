@@ -31,7 +31,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
   - Ensure existing CoopNet builds continue to compile without changes
   > **Completed**: `lobby_query.h` created with shared typedefs. `coopnet.h` updated to include it with backward-compatible aliases. Existing `coopnet.c` still compiles using old `QueryCallbackPtr`/`QueryFinishCallbackPtr` names which are now typedef aliases.
 
-- [ ] Extend the WebSocket relay server with room metadata (`tools/web_relay/server.js`):
+- [x] Extend the WebSocket relay server with room metadata (`tools/web_relay/server.js`):
   - Add metadata fields to the `Room` class constructor: `hostName` (string, max 64 chars), `version` (string, max 32 chars), `mode` (string, max 64 chars — main mod/game mode), `maxPlayers` (number, room-specific cap), `description` (string, max 512 chars — version + mods list), `isPublic` (boolean, default true)
   - Extend the `"host"` command handler (line 226) to accept metadata from the client's JSON message:
     ```json
@@ -48,6 +48,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     ```
   - Skip private rooms (`isPublic: false`) and dead rooms (empty or host gone) in the list response
   - Add an `"update_room"` command for hosts to update their room metadata after creation (for mod changes, etc.)
+  > **Completed**: All subtasks verified implemented. Room class has metadata fields with `truncStr()` sanitization. Host command extracts metadata from client JSON. `addClient()` respects room-specific `maxPlayers` capped by `MAX_PLAYERS_PER_ROOM`. List command enabled for all environments (no production guard). Room list returns rich metadata (code, hostName, version, mode, players, maxPlayers, description). Private and dead rooms filtered. `update_room` command allows host (clientIndex 0) to modify metadata post-creation. Build verified clean.
 
 - [ ] Implement the WebSocket lobby query client (`src/pc/network/websocket/network_websocket.c`):
   - Add `ns_websocket_query(LobbyQueryCallbackPtr callback, LobbyQueryFinishCallbackPtr finishCallback)`:

@@ -18,17 +18,34 @@ const MAX_MESSAGE_SIZE = 4096; // PACKET_LENGTH(3000) + 16 + overhead
 const rooms = new Map();      // roomCode -> Room
 let totalConnections = 0;
 
+// Truncate a string to maxLen characters
+function truncStr(str, maxLen) {
+    if (typeof str !== "string") return "";
+    return str.slice(0, maxLen);
+}
+
 class Room {
-    constructor(code, host) {
+    constructor(code, host, meta) {
         this.code = code;
         this.clients = new Map(); // clientIndex -> ws
         this.host = host;
         this.nextClientIndex = 1; // 0 is reserved for host
         this.createdAt = Date.now();
+
+        // Room metadata (from host command)
+        this.hostName = truncStr(meta.hostName || "", 64);
+        this.version = truncStr(meta.version || "", 32);
+        this.mode = truncStr(meta.mode || "", 64);
+        this.maxPlayers = Math.min(
+            Math.max(parseInt(meta.maxPlayers) || MAX_PLAYERS_PER_ROOM, 2),
+            MAX_PLAYERS_PER_ROOM
+        );
+        this.description = truncStr(meta.description || "", 512);
+        this.isPublic = meta.isPublic !== false; // default true
     }
 
     addClient(ws) {
-        if (this.clients.size >= MAX_PLAYERS_PER_ROOM) {
+        if (this.clients.size >= this.maxPlayers) {
             return -1;
         }
         const index = this.host === ws ? 0 : this.nextClientIndex++;
@@ -233,7 +250,14 @@ function handleControlMessage(ws, text) {
                 return;
             }
             const code = generateRoomCode();
-            const room = new Room(code, ws);
+            const room = new Room(code, ws, {
+                hostName: msg.hostName,
+                version: msg.version,
+                mode: msg.mode,
+                maxPlayers: msg.maxPlayers,
+                description: msg.description,
+                isPublic: msg.isPublic,
+            });
             room.addClient(ws);
             rooms.set(code, room);
             ws.send(JSON.stringify({
@@ -241,7 +265,7 @@ function handleControlMessage(ws, text) {
                 roomCode: code,
                 clientIndex: 0,
             }));
-            console.log(`Room ${code} created`);
+            console.log(`Room ${code} created (host: ${room.hostName}, public: ${room.isPublic})`);
             break;
         }
 
@@ -280,21 +304,43 @@ function handleControlMessage(ws, text) {
         }
 
         case "list": {
-            // For debugging: list rooms (only in development)
-            if (process.env.NODE_ENV === "production") {
-                ws.send(JSON.stringify({ type: "error", message: "Not available" }));
-                return;
-            }
             const roomList = [];
             for (const [code, room] of rooms) {
+                // Skip private rooms and dead rooms
+                if (!room.isPublic) continue;
+                if (room.isEmpty() || room.isHostGone()) continue;
                 roomList.push({
                     code,
+                    hostName: room.hostName,
+                    version: room.version,
+                    mode: room.mode,
                     players: room.clients.size,
-                    maxPlayers: MAX_PLAYERS_PER_ROOM,
-                    createdAt: room.createdAt,
+                    maxPlayers: room.maxPlayers,
+                    description: room.description,
                 });
             }
             ws.send(JSON.stringify({ type: "room_list", rooms: roomList }));
+            break;
+        }
+
+        case "update_room": {
+            if (!ws.room || ws.clientIndex !== 0) {
+                ws.send(JSON.stringify({ type: "error", message: "Not a room host" }));
+                return;
+            }
+            const room = ws.room;
+            if (msg.hostName !== undefined) room.hostName = truncStr(msg.hostName, 64);
+            if (msg.version !== undefined) room.version = truncStr(msg.version, 32);
+            if (msg.mode !== undefined) room.mode = truncStr(msg.mode, 64);
+            if (msg.description !== undefined) room.description = truncStr(msg.description, 512);
+            if (msg.isPublic !== undefined) room.isPublic = !!msg.isPublic;
+            if (msg.maxPlayers !== undefined) {
+                room.maxPlayers = Math.min(
+                    Math.max(parseInt(msg.maxPlayers) || room.maxPlayers, 2),
+                    MAX_PLAYERS_PER_ROOM
+                );
+            }
+            ws.send(JSON.stringify({ type: "room_updated" }));
             break;
         }
 
