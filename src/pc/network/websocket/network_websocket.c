@@ -178,6 +178,12 @@ static void ws_handle_control_message(const char* json) {
         sWaitingForRoom = false;
         LOG_INFO("WebSocket: joined room %s (clientIndex=%d)", sRoomCode, sLocalClientIndex);
 
+        // Kick off the join protocol: request mod list from the server (host)
+        // This mirrors what CoopNet does in coopnet_on_lobby_joined()
+        if (gNetworkType == NT_CLIENT) {
+            network_send_mod_list_request();
+        }
+
     } else if (strcmp(msgType, "player_joined") == 0) {
         int idx = 0;
         if (ws_json_get_int(json, "clientIndex", &idx)) {
@@ -665,6 +671,10 @@ static void ns_websocket_update(void) {
             }
         }
 
+        // Store sender's relay index in slot 0 (like socket stores sender addr in sAddr[0])
+        // This allows network_send_to(0, ...) to route responses back to the last sender
+        sClientIds[0] = (s64)msg->clientIndex;
+
         network_receive(localIndex, &sClientIds[0], msg->data, msg->dataLength);
 
         sMsgQueueTail = (sMsgQueueTail + 1) % WS_MSG_QUEUE_SIZE;
@@ -683,10 +693,15 @@ static int ns_websocket_send(u8 localIndex, void* address, u8* data, u16 dataLen
         if (gNetworkType == NT_CLIENT && gNetworkPlayers[localIndex].type != NPT_SERVER) { return SOCKET_ERROR; }
     }
 
-    // Prepend the target client index byte
-    u8 targetIndex = (u8)(localIndex);
-    if (localIndex == 0 && address != NULL) {
-        targetIndex = (u8)(*(s64*)address);
+    // Determine target relay client index
+    // When localIndex==0: use address if provided (like socket uses sender addr),
+    // otherwise fall back to sClientIds[0] (last sender's relay index)
+    u8 targetIndex;
+    if (localIndex == 0) {
+        s64 relayId = (address != NULL) ? *(s64*)address : sClientIds[0];
+        targetIndex = (u8)relayId;
+    } else {
+        targetIndex = (u8)sClientIds[localIndex];
     }
 
     u16 totalLen = 1 + dataLength;
