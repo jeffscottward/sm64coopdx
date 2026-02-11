@@ -4,7 +4,8 @@
   "description": "WebSocket relay server for SM64CoopDX web multiplayer",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "bun run server.bun.ts",
+    "start:node": "node server.js",
     "test": "node test.js",
     "test:connectivity": "node test_connectivity.js",
     "test:all": "node test.js && node test_connectivity.js"
