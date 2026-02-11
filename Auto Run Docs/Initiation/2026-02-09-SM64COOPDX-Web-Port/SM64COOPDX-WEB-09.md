@@ -98,7 +98,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
   - Ensure the `djui_panel_join_public_lobbies` function is accessible on web builds (it's currently inside `#ifdef COOPNET`)
   > **Completed**: All subtasks verified already implemented from a prior session. The `#ifdef TARGET_WEB` block in `djui_panel_join_create()` (lines 18-27) now shows a three-panel menu with "Public Lobbies" (→ `djui_panel_join_public_lobbies`), "Direct" (→ `djui_panel_join_direct_create`), and "Back" buttons. "Private Lobbies" is correctly excluded from web builds. The `djui_panel_join_public_lobbies` static function (line 12) is guarded by `#if defined(COOPNET) || defined(TARGET_WEB)`, making it accessible for both native and web builds. Build verified clean.
 
-- [ ] Make the lobby browser panel work with WebSocket query (`src/pc/djui/djui_panel_join_lobbies.c`):
+- [x] Make the lobby browser panel work with WebSocket query (`src/pc/djui/djui_panel_join_lobbies.c`):
   - Change the compile guard from `#ifdef COOPNET` to `#if defined(COOPNET) || defined(TARGET_WEB)`
   - Add `#ifdef TARGET_WEB` includes for `pc/network/websocket/network_websocket.h`
   - Add `#ifdef COOPNET` includes for `pc/network/coopnet/coopnet.h` (keep existing)
@@ -110,6 +110,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     - Set network system to `NS_WEBSOCKET`
     - Call `network_init(NT_CLIENT, false)`
   - Verify `src/pc/djui/djui_panel_join_lobbies.h` is NOT wrapped in `#ifdef COOPNET`
+  > **Completed**: All subtasks verified already implemented from prior sessions. Compile guard changed to `#if defined(COOPNET) || defined(TARGET_WEB)` (line 21). Conditional includes: `#ifdef COOPNET` for `coopnet.h` (line 10-12), `#ifdef TARGET_WEB` for `network_websocket.h` (line 13-15). `djui_panel_join_lobbies_do_query()` dispatches to `ns_websocket_query()` on web or `ns_coopnet_query()` on native (lines 151-158). `djui_panel_join_lobby()` has `#ifdef TARGET_WEB` path that looks up room code via `ns_websocket_get_lobby_code()`, calls `ns_websocket_set_pending_join()`, sets `NS_WEBSOCKET`, and calls `network_init(NT_CLIENT, false)` (lines 74-86). Header `djui_panel_join_lobbies.h` confirmed NOT wrapped in `#ifdef COOPNET`. Web build verified clean.
 
 - [ ] Build and test the complete lobby browsing flow:
   - Build: `source ~/emsdk/emsdk_env.sh && gmake -f Makefile.web -j8`
