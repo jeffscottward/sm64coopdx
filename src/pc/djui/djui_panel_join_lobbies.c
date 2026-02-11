@@ -112,7 +112,6 @@ void djui_panel_join_query(uint64_t aLobbyId, UNUSED uint64_t aOwnerId, uint16_t
     bool isCoopNet = (strcmp(aVersion, "coopnet") == 0);
     if (isCoopNet) {
         disabled = true;
-        snprintf(mode, 64, "\\#808080\\%s", aMode);
     } else
 #endif
     if (disabled) {
