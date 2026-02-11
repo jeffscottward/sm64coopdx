@@ -14,7 +14,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
 
 ## Tasks
 
-- [ ] Create shared lobby query callback typedefs (`src/pc/network/lobby_query.h`):
+- [x] Create shared lobby query callback typedefs (`src/pc/network/lobby_query.h`):
   - Create a new header file `src/pc/network/lobby_query.h` with callback types currently locked inside `#ifdef COOPNET`:
     ```c
     typedef void (*LobbyQueryCallbackPtr)(uint64_t lobbyId, uint64_t ownerId,
@@ -29,6 +29,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     typedef LobbyQueryFinishCallbackPtr QueryFinishCallbackPtr;
     ```
   - Ensure existing CoopNet builds continue to compile without changes
+  > **Completed**: `lobby_query.h` created with shared typedefs. `coopnet.h` updated to include it with backward-compatible aliases. Existing `coopnet.c` still compiles using old `QueryCallbackPtr`/`QueryFinishCallbackPtr` names which are now typedef aliases.
 
 - [ ] Extend the WebSocket relay server with room metadata (`tools/web_relay/server.js`):
   - Add metadata fields to the `Room` class constructor: `hostName` (string, max 64 chars), `version` (string, max 32 chars), `mode` (string, max 64 chars — main mod/game mode), `maxPlayers` (number, room-specific cap), `description` (string, max 512 chars — version + mods list), `isPublic` (boolean, default true)
