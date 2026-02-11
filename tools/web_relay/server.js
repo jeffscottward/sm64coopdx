@@ -3,6 +3,8 @@
 const http = require("http");
 const { WebSocketServer } = require("ws");
 const crypto = require("crypto");
+const { execFile } = require("child_process");
+const path = require("path");
 
 // Configuration from environment or defaults
 const PORT = parseInt(process.env.WS_RELAY_PORT || "8765", 10);
@@ -116,6 +118,80 @@ function checkRateLimit(ws) {
     ws.rateLimitCount++;
     return ws.rateLimitCount <= RATE_LIMIT_MAX_MESSAGES;
 }
+
+// --- CoopNet lobby proxy integration ---
+const COOPNET_PROXY_PATH = path.join(__dirname, "coopnet_proxy");
+const COOPNET_CACHE_TTL_MS = 30_000; // Refresh every 30 seconds
+const COOPNET_HOST = process.env.COOPNET_HOST || "net.coop64.us";
+const COOPNET_PORT = process.env.COOPNET_PORT || "34197";
+
+let coopnetLobbies = [];       // Cached CoopNet lobby list
+let coopnetLastFetch = 0;      // Timestamp of last successful fetch
+let coopnetFetching = false;   // Prevent concurrent fetches
+
+function fetchCoopNetLobbies() {
+    if (coopnetFetching) return;
+
+    // Check if the proxy binary exists
+    const fs = require("fs");
+    if (!fs.existsSync(COOPNET_PROXY_PATH)) {
+        // Proxy not compiled — skip silently
+        return;
+    }
+
+    coopnetFetching = true;
+    const lobbies = [];
+    const child = execFile(COOPNET_PROXY_PATH, [COOPNET_HOST, COOPNET_PORT], {
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+        env: {
+            ...process.env,
+            DYLD_LIBRARY_PATH: path.join(__dirname, "../../lib/coopnet/mac_arm"),
+            LD_LIBRARY_PATH: path.join(__dirname, "../../lib/coopnet/linux"),
+        },
+    }, (error, stdout, stderr) => {
+        coopnetFetching = false;
+        if (error) {
+            console.error(`CoopNet proxy error: ${error.message}`);
+            if (stderr) console.error(`  stderr: ${stderr.trim()}`);
+            return;
+        }
+
+        const lines = stdout.split("\n");
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed === "END" || trimmed === "") continue;
+            try {
+                const lobby = JSON.parse(trimmed);
+                lobbies.push({
+                    code: `CN-${lobby.lobbyId}`, // Prefix to distinguish from relay rooms
+                    hostName: lobby.hostName || "",
+                    version: lobby.version || "",
+                    mode: lobby.mode || "",
+                    players: lobby.players || 0,
+                    maxPlayers: lobby.maxPlayers || 16,
+                    description: lobby.description || "",
+                    source: "coopnet",
+                    lobbyId: lobby.lobbyId,
+                });
+            } catch {
+                // Skip malformed lines
+            }
+        }
+
+        coopnetLobbies = lobbies;
+        coopnetLastFetch = Date.now();
+        console.log(`CoopNet proxy: cached ${lobbies.length} lobbies`);
+    });
+}
+
+// Refresh CoopNet lobbies periodically
+setInterval(() => {
+    fetchCoopNetLobbies();
+}, COOPNET_CACHE_TTL_MS);
+
+// Initial fetch on startup (after a short delay)
+setTimeout(() => fetchCoopNetLobbies(), 2000);
 
 // HTTP server for health check
 const httpServer = http.createServer((req, res) => {
@@ -305,8 +381,9 @@ function handleControlMessage(ws, text) {
 
         case "list": {
             const roomList = [];
+
+            // Add local WebSocket relay rooms
             for (const [code, room] of rooms) {
-                // Skip private rooms and dead rooms
                 if (!room.isPublic) continue;
                 if (room.isEmpty() || room.isHostGone()) continue;
                 roomList.push({
@@ -319,6 +396,12 @@ function handleControlMessage(ws, text) {
                     description: room.description,
                 });
             }
+
+            // Merge cached CoopNet lobbies (read-only, can't join via relay)
+            for (const lobby of coopnetLobbies) {
+                roomList.push(lobby);
+            }
+
             ws.send(JSON.stringify({ type: "room_list", rooms: roomList }));
             break;
         }
