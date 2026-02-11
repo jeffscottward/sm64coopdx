@@ -108,6 +108,13 @@ void djui_panel_join_query(uint64_t aLobbyId, UNUSED uint64_t aOwnerId, uint16_t
     char version[MAX_VERSION_LENGTH] = { 0 };
     snprintf(version, MAX_VERSION_LENGTH, "%s", get_version());
     bool disabled = strcmp(version, aVersion) != 0;
+#ifdef TARGET_WEB
+    bool isCoopNet = (strcmp(aVersion, "coopnet") == 0);
+    if (isCoopNet) {
+        disabled = true;
+        snprintf(mode, 64, "\\#808080\\%s", aMode);
+    } else
+#endif
     if (disabled) {
         snprintf(mode, 64, "\\#ff0000\\[%s]", aVersion);
     }

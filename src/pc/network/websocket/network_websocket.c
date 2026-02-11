@@ -326,11 +326,12 @@ static void ws_query_handle_room_list(const char* json) {
         objBuf[objLen] = '\0';
 
         // Extract fields
-        char code[8] = "";
+        char code[32] = "";
         char hostName[65] = "";
         char version[33] = "";
         char mode[65] = "";
         char description[513] = "";
+        char source[16] = "";
         int players = 0;
         int maxPlayers = 0;
 
@@ -339,12 +340,18 @@ static void ws_query_handle_room_list(const char* json) {
         ws_json_get_string(objBuf, "version", version, sizeof(version));
         ws_json_get_string(objBuf, "mode", mode, sizeof(mode));
         ws_json_get_string(objBuf, "description", description, sizeof(description));
+        ws_json_get_string(objBuf, "source", source, sizeof(source));
         ws_json_get_int(objBuf, "players", &players);
         ws_json_get_int(objBuf, "maxPlayers", &maxPlayers);
 
+        // CoopNet lobbies are view-only (can't join from web browser)
+        // Pass special version marker so the UI can identify and disable them
+        bool isCoopNet = (strcmp(source, "coopnet") == 0);
+        const char* displayVersion = isCoopNet ? "coopnet" : version;
+
         // Generate a lobby ID from the room code and store the mapping
         uint64_t lobbyId = ws_lobby_id_from_code(code);
-        if (sLobbyCodeMapCount < WS_LOBBY_MAP_MAX) {
+        if (!isCoopNet && sLobbyCodeMapCount < WS_LOBBY_MAP_MAX) {
             sLobbyCodeMap[sLobbyCodeMapCount].lobbyId = lobbyId;
             snprintf(sLobbyCodeMap[sLobbyCodeMapCount].code, sizeof(sLobbyCodeMap[0].code), "%s", code);
             sLobbyCodeMapCount++;
@@ -354,7 +361,7 @@ static void ws_query_handle_room_list(const char* json) {
         if (sQueryCallback) {
             sQueryCallback(lobbyId, 0,
                 (uint16_t)players, (uint16_t)maxPlayers,
-                GAME_NAME, version, hostName, mode, description);
+                GAME_NAME, displayVersion, hostName, mode, description);
         }
 
         p = objEnd + 1;
