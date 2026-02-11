@@ -110,7 +110,21 @@ static bool ws_json_get_string(const char* json, const char* key, char* dest, si
         pos++;
         size_t i = 0;
         while (*pos && *pos != '"' && i < destLen - 1) {
-            dest[i++] = *pos++;
+            if (*pos == '\\' && *(pos + 1)) {
+                pos++; // skip the backslash
+                switch (*pos) {
+                    case '"':  dest[i++] = '"';  break;
+                    case '\\': dest[i++] = '\\'; break;
+                    case '/':  dest[i++] = '/';  break;
+                    case 'n':  dest[i++] = '\n'; break;
+                    case 'r':  dest[i++] = '\r'; break;
+                    case 't':  dest[i++] = '\t'; break;
+                    default:   dest[i++] = *pos; break;
+                }
+                pos++;
+            } else {
+                dest[i++] = *pos++;
+            }
         }
         dest[i] = '\0';
         return true;
