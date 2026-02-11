@@ -9,6 +9,8 @@
 #include "pc/debuglog.h"
 #include "pc/djui/djui.h"
 #include "pc/djui/djui_panel_join_message.h"
+#include "pc/mods/mods.h"
+#include "pc/network/version.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/websocket.h>
@@ -54,8 +56,44 @@ static u16 sMsgQueueHead = 0;
 static u16 sMsgQueueTail = 0;
 static u16 sMsgQueueCount = 0;
 
+// Lobby query: mapping lobbyId -> room code for join-by-click
+#define WS_LOBBY_MAP_MAX 128
+struct LobbyCodeEntry {
+    uint64_t lobbyId;
+    char code[8]; // 6-char room code + null
+};
+static struct LobbyCodeEntry sLobbyCodeMap[WS_LOBBY_MAP_MAX];
+static int sLobbyCodeMapCount = 0;
+
+// Escape a string for safe JSON embedding (handles " and \ characters)
+static void ws_json_escape(const char* src, char* dest, size_t destLen) {
+    size_t j = 0;
+    for (size_t i = 0; src[i] && j < destLen - 2; i++) {
+        if (src[i] == '"' || src[i] == '\\') {
+            if (j + 2 >= destLen - 1) break;
+            dest[j++] = '\\';
+        }
+        dest[j++] = src[i];
+    }
+    dest[j] = '\0';
+}
+
+// Generate a stable hash-based lobby ID from a room code string
+static uint64_t ws_lobby_id_from_code(const char* code) {
+    uint64_t hash = 5381;
+    for (const char* p = code; *p; p++) {
+        hash = ((hash << 5) + hash) + (uint64_t)(*p);
+    }
+    return hash;
+}
+
 #ifdef __EMSCRIPTEN__
 static EMSCRIPTEN_WEBSOCKET_T sWebSocket = 0;
+
+// Dedicated query WebSocket (separate from game connection)
+static EMSCRIPTEN_WEBSOCKET_T sQueryWebSocket = 0;
+static LobbyQueryCallbackPtr sQueryCallback = NULL;
+static LobbyQueryFinishCallbackPtr sQueryFinishCallback = NULL;
 
 // Simple JSON string value extractor (no dependency on a JSON library)
 // Finds "key":"value" in a JSON string and copies value to dest
@@ -230,6 +268,140 @@ static EM_BOOL ws_on_close(int eventType, const EmscriptenWebSocketCloseEvent* w
     sWebSocket = 0;
     return EM_TRUE;
 }
+
+// --- Lobby query WebSocket callbacks ---
+
+static void ws_query_handle_room_list(const char* json) {
+    // Find the "rooms" array in the JSON
+    const char* roomsStart = strstr(json, "\"rooms\"");
+    if (!roomsStart) {
+        LOG_ERROR("WebSocket query: no rooms array in response");
+        if (sQueryFinishCallback) sQueryFinishCallback();
+        return;
+    }
+    const char* arrStart = strchr(roomsStart, '[');
+    if (!arrStart) {
+        if (sQueryFinishCallback) sQueryFinishCallback();
+        return;
+    }
+    arrStart++;
+
+    // Iterate over each {...} object in the array
+    const char* p = arrStart;
+    while (*p) {
+        // Skip whitespace and commas
+        while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\r' || *p == '\t') p++;
+        if (*p == ']' || *p == '\0') break;
+        if (*p != '{') { p++; continue; }
+
+        // Find matching closing brace
+        const char* objStart = p;
+        int depth = 0;
+        const char* objEnd = NULL;
+        for (const char* q = p; *q; q++) {
+            if (*q == '{') depth++;
+            else if (*q == '}') { depth--; if (depth == 0) { objEnd = q; break; } }
+        }
+        if (!objEnd) break;
+
+        // Copy object to a temp buffer for parsing
+        size_t objLen = (size_t)(objEnd - objStart + 1);
+        char objBuf[2048];
+        if (objLen >= sizeof(objBuf)) objLen = sizeof(objBuf) - 1;
+        memcpy(objBuf, objStart, objLen);
+        objBuf[objLen] = '\0';
+
+        // Extract fields
+        char code[8] = "";
+        char hostName[65] = "";
+        char version[33] = "";
+        char mode[65] = "";
+        char description[513] = "";
+        int players = 0;
+        int maxPlayers = 0;
+
+        ws_json_get_string(objBuf, "code", code, sizeof(code));
+        ws_json_get_string(objBuf, "hostName", hostName, sizeof(hostName));
+        ws_json_get_string(objBuf, "version", version, sizeof(version));
+        ws_json_get_string(objBuf, "mode", mode, sizeof(mode));
+        ws_json_get_string(objBuf, "description", description, sizeof(description));
+        ws_json_get_int(objBuf, "players", &players);
+        ws_json_get_int(objBuf, "maxPlayers", &maxPlayers);
+
+        // Generate a lobby ID from the room code and store the mapping
+        uint64_t lobbyId = ws_lobby_id_from_code(code);
+        if (sLobbyCodeMapCount < WS_LOBBY_MAP_MAX) {
+            sLobbyCodeMap[sLobbyCodeMapCount].lobbyId = lobbyId;
+            snprintf(sLobbyCodeMap[sLobbyCodeMapCount].code, sizeof(sLobbyCodeMap[0].code), "%s", code);
+            sLobbyCodeMapCount++;
+        }
+
+        // Call the UI callback
+        if (sQueryCallback) {
+            sQueryCallback(lobbyId, 0,
+                (uint16_t)players, (uint16_t)maxPlayers,
+                GAME_NAME, version, hostName, mode, description);
+        }
+
+        p = objEnd + 1;
+    }
+
+    if (sQueryFinishCallback) sQueryFinishCallback();
+}
+
+static EM_BOOL ws_query_on_open(int eventType, const EmscriptenWebSocketOpenEvent* wsEvent, void* userData) {
+    (void)eventType; (void)wsEvent; (void)userData;
+    LOG_INFO("WebSocket query: connection opened, sending list request");
+    emscripten_websocket_send_utf8_text(sQueryWebSocket, "{\"type\":\"list\"}");
+    return EM_TRUE;
+}
+
+static EM_BOOL ws_query_on_message(int eventType, const EmscriptenWebSocketMessageEvent* wsEvent, void* userData) {
+    (void)eventType; (void)userData;
+    if (wsEvent->isText && wsEvent->numBytes > 0) {
+        const char* json = (const char*)wsEvent->data;
+        char msgType[32] = "";
+        ws_json_get_string(json, "type", msgType, sizeof(msgType));
+        if (strcmp(msgType, "room_list") == 0) {
+            ws_query_handle_room_list(json);
+        } else if (strcmp(msgType, "error") == 0) {
+            char errorMsg[128] = "";
+            ws_json_get_string(json, "message", errorMsg, sizeof(errorMsg));
+            LOG_ERROR("WebSocket query error: %s", errorMsg);
+            if (sQueryFinishCallback) sQueryFinishCallback();
+        }
+    }
+
+    // Close the query WebSocket after we get a response
+    if (sQueryWebSocket > 0) {
+        emscripten_websocket_close(sQueryWebSocket, 1000, "query done");
+        emscripten_websocket_delete(sQueryWebSocket);
+        sQueryWebSocket = 0;
+    }
+    sQueryCallback = NULL;
+    sQueryFinishCallback = NULL;
+    return EM_TRUE;
+}
+
+static EM_BOOL ws_query_on_error(int eventType, const EmscriptenWebSocketErrorEvent* wsEvent, void* userData) {
+    (void)eventType; (void)wsEvent; (void)userData;
+    LOG_ERROR("WebSocket query: connection error");
+    if (sQueryFinishCallback) sQueryFinishCallback();
+    sQueryCallback = NULL;
+    sQueryFinishCallback = NULL;
+    if (sQueryWebSocket > 0) {
+        emscripten_websocket_delete(sQueryWebSocket);
+        sQueryWebSocket = 0;
+    }
+    return EM_TRUE;
+}
+
+static EM_BOOL ws_query_on_close(int eventType, const EmscriptenWebSocketCloseEvent* wsEvent, void* userData) {
+    (void)eventType; (void)wsEvent; (void)userData;
+    LOG_INFO("WebSocket query: connection closed");
+    sQueryWebSocket = 0;
+    return EM_TRUE;
+}
 #endif /* __EMSCRIPTEN__ */
 
 void ns_websocket_send_host_command(void) {
@@ -238,10 +410,27 @@ void ns_websocket_send_host_command(void) {
         LOG_ERROR("WebSocket: cannot send host command, not connected");
         return;
     }
-    const char* cmd = "{\"type\":\"host\"}";
+
+    // Get the active mod name (largest enabled mod, or "Super Mario 64" if none)
+    char modeName[64] = "";
+    mods_get_main_mod_name(modeName, sizeof(modeName));
+
+    // Escape player name, version, and mode for safe JSON embedding
+    char escapedName[130] = "";
+    char escapedVersion[66] = "";
+    char escapedMode[130] = "";
+    ws_json_escape(configPlayerName, escapedName, sizeof(escapedName));
+    ws_json_escape(get_version(), escapedVersion, sizeof(escapedVersion));
+    ws_json_escape(modeName, escapedMode, sizeof(escapedMode));
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+        "{\"type\":\"host\",\"hostName\":\"%s\",\"version\":\"%s\","
+        "\"mode\":\"%s\",\"maxPlayers\":%u,\"isPublic\":true}",
+        escapedName, escapedVersion, escapedMode, configAmountOfPlayers);
     emscripten_websocket_send_utf8_text(sWebSocket, cmd);
     sWaitingForRoom = true;
-    LOG_INFO("WebSocket: sent host command");
+    LOG_INFO("WebSocket: sent host command with metadata (mode=%s)", modeName);
 #endif
 }
 
@@ -277,6 +466,66 @@ bool ns_websocket_is_connected(void) {
 void ns_websocket_set_pending_join(const char* roomCode) {
     snprintf(sPendingJoinCode, sizeof(sPendingJoinCode), "%s", roomCode);
     sPendingHost = false;
+}
+
+bool ns_websocket_query(LobbyQueryCallbackPtr callback, LobbyQueryFinishCallbackPtr finishCallback) {
+#ifdef __EMSCRIPTEN__
+    // Clear lobby code map for fresh query
+    sLobbyCodeMapCount = 0;
+    memset(sLobbyCodeMap, 0, sizeof(sLobbyCodeMap));
+
+    sQueryCallback = callback;
+    sQueryFinishCallback = finishCallback;
+
+    // Close any existing query WebSocket
+    if (sQueryWebSocket > 0) {
+        emscripten_websocket_close(sQueryWebSocket, 1000, "new query");
+        emscripten_websocket_delete(sQueryWebSocket);
+        sQueryWebSocket = 0;
+    }
+
+    // Build relay URL (same logic as game connection)
+    const char* relayUrl = configWebSocketRelay;
+#ifdef SM64_WS_RELAY_URL
+    relayUrl = SM64_WS_RELAY_URL;
+#endif
+    if (relayUrl == NULL || relayUrl[0] == '\0') {
+        relayUrl = "ws://localhost:8765";
+    }
+
+    EmscriptenWebSocketCreateAttributes attrs = {
+        .url = relayUrl,
+        .protocols = NULL,
+        .createOnMainThread = EM_TRUE,
+    };
+
+    sQueryWebSocket = emscripten_websocket_new(&attrs);
+    if (sQueryWebSocket <= 0) {
+        LOG_ERROR("WebSocket query: failed to create connection to %s", relayUrl);
+        if (finishCallback) finishCallback();
+        return false;
+    }
+
+    emscripten_websocket_set_onopen_callback(sQueryWebSocket, NULL, ws_query_on_open);
+    emscripten_websocket_set_onmessage_callback(sQueryWebSocket, NULL, ws_query_on_message);
+    emscripten_websocket_set_onerror_callback(sQueryWebSocket, NULL, ws_query_on_error);
+    emscripten_websocket_set_onclose_callback(sQueryWebSocket, NULL, ws_query_on_close);
+
+    LOG_INFO("WebSocket query: connecting to %s", relayUrl);
+    return true;
+#else
+    (void)callback; (void)finishCallback;
+    return false;
+#endif
+}
+
+const char* ns_websocket_get_lobby_code(uint64_t lobbyId) {
+    for (int i = 0; i < sLobbyCodeMapCount; i++) {
+        if (sLobbyCodeMap[i].lobbyId == lobbyId) {
+            return sLobbyCodeMap[i].code;
+        }
+    }
+    return NULL;
 }
 
 static bool ns_websocket_initialize(enum NetworkType networkType, UNUSED bool reconnecting) {

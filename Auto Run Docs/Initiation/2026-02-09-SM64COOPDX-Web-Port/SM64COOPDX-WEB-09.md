@@ -77,7 +77,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     ```
   > **Completed**: All subtasks verified already implemented from a prior session. `ns_websocket_query()` opens a dedicated query WebSocket to the relay, sends `{"type":"list"}`, and parses the JSON `room_list` response using a custom brace-depth parser with `ws_json_get_string()`/`ws_json_get_int()` helpers. The `sLobbyCodeMap[128]` array maps hash-based lobby IDs to 6-char room codes for UI integration. `ws_json_escape()` sanitizes strings for JSON embedding. `ws_query_on_error` calls `finishCallback()` to prevent UI hangs. Header updated with `#include "pc/network/lobby_query.h"` and function declarations. Build verified clean.
 
-- [ ] Send host metadata when creating rooms (`src/pc/network/websocket/network_websocket.c`):
+- [x] Send host metadata when creating rooms (`src/pc/network/websocket/network_websocket.c`):
   - Modify `ns_websocket_send_host_command()` to include metadata in the JSON:
     - `configPlayerName` (from `pc/configfile.h`) — the host's display name
     - `get_version()` (from `pc/network/version.h`) — game version string
@@ -86,6 +86,7 @@ Additionally, the WebSocket relay server (`tools/web_relay/server.js`) has a `"l
     - `isPublic: true` — default to public lobby
   - Use `ws_json_escape()` to sanitize player names and mod names before embedding in JSON
   - Add required `#include` directives for `pc/network/version.h` and `pc/configfile.h`
+  > **Completed**: `ns_websocket_send_host_command()` already included `configPlayerName`, `get_version()`, `configAmountOfPlayers`, and `isPublic:true` from a prior session. The remaining gap was the `mode` field which was hardcoded as `"Normal"` — now replaced with `mods_get_main_mod_name()` (from `pc/mods/mods.h`) which returns the largest enabled mod's name or "Super Mario 64" if no mods are enabled, matching the CoopNet implementation in `coopnet.c`. All string fields (`hostName`, `version`, `mode`) are sanitized via `ws_json_escape()`. Includes for `pc/configfile.h` and `pc/network/version.h` were already present; added `pc/mods/mods.h`. Build verified clean.
 
 - [ ] Modify the DJUI join panel to show the lobby menu on web builds (`src/pc/djui/djui_panel_join.c`):
   - Replace the `#ifdef TARGET_WEB` block (line 18) that bypasses to `djui_panel_join_direct_create()`

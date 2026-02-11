@@ -8,16 +8,23 @@
 #include "pc/utils/misc.h"
 #include "pc/update_checker.h"
 
-#ifdef COOPNET
+#if defined(COOPNET) || defined(TARGET_WEB)
 static void djui_panel_join_public_lobbies(struct DjuiBase* caller) {
     djui_panel_join_lobbies_create(caller, "");
 }
 #endif
 
 void djui_panel_join_create(struct DjuiBase* caller) {
-#ifdef TARGET_WEB
-    // Web builds go directly to room code join panel
-    djui_panel_join_direct_create(caller);
+#if defined(TARGET_WEB)
+    // Web builds: show Public Lobbies + Direct (no Private — relay doesn't support passwords yet)
+    struct DjuiThreePanel* panel = djui_panel_menu_create(DLANG(JOIN, JOIN_TITLE), false);
+    struct DjuiBase* body = djui_three_panel_get_body(panel);
+    {
+        djui_button_create(body, DLANG(JOIN, PUBLIC_LOBBIES), DJUI_BUTTON_STYLE_NORMAL, djui_panel_join_public_lobbies);
+        djui_button_create(body, DLANG(JOIN, DIRECT), DJUI_BUTTON_STYLE_NORMAL, djui_panel_join_direct_create);
+        djui_button_create(body, DLANG(MENU, BACK), DJUI_BUTTON_STYLE_BACK, djui_panel_menu_back);
+    }
+    djui_panel_add(caller, panel, NULL);
 #elif !defined(COOPNET)
     djui_panel_join_direct_create(caller);
 #else

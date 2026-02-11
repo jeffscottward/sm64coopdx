@@ -4,6 +4,7 @@
 #ifdef TARGET_WEB
 
 #include "../network.h"
+#include "pc/network/lobby_query.h"
 
 extern struct NetworkSystem gNetworkSystemWebSocket;
 
@@ -22,6 +23,12 @@ bool ns_websocket_is_connected(void);
 // Set a pending join code to be sent after the WebSocket connection opens
 // Must be called BEFORE network_init() since the connection is async
 void ns_websocket_set_pending_join(const char* roomCode);
+
+// Query public lobbies from the relay server
+bool ns_websocket_query(LobbyQueryCallbackPtr callback, LobbyQueryFinishCallbackPtr finishCallback);
+
+// Look up the room code for a lobby ID returned by the query callback
+const char* ns_websocket_get_lobby_code(uint64_t lobbyId);
 
 #endif /* TARGET_WEB */
 

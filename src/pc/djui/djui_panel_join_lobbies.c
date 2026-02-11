@@ -7,13 +7,18 @@
 #include "djui_panel_rules.h"
 #include "pc/network/network.h"
 #include "pc/network/socket/socket.h"
+#ifdef COOPNET
 #include "pc/network/coopnet/coopnet.h"
+#endif
+#ifdef TARGET_WEB
+#include "pc/network/websocket/network_websocket.h"
+#endif
 #include "pc/utils/misc.h"
 #include "pc/configfile.h"
 #include "pc/debuglog.h"
 #include "macros.h"
 
-#ifdef COOPNET
+#if defined(COOPNET) || defined(TARGET_WEB)
 
 #define DJUI_DESC_PANEL_WIDTH (410.0f + (16 * 2.0f))
 
@@ -66,12 +71,26 @@ static void djui_lobby_on_hover_end(UNUSED struct DjuiBase* base) {
 }
 
 void djui_panel_join_lobby(struct DjuiBase* caller) {
+#ifdef TARGET_WEB
+    uint64_t lobbyId = (uint64_t)caller->tag;
+    const char* roomCode = ns_websocket_get_lobby_code(lobbyId);
+    if (!roomCode || roomCode[0] == '\0') {
+        LOG_ERROR("Could not find room code for lobbyId %llu", (unsigned long long)lobbyId);
+        return;
+    }
+    ns_websocket_set_pending_join(roomCode);
+    network_reset_reconnect_and_rehost();
+    network_set_system(NS_WEBSOCKET);
+    network_init(NT_CLIENT, false);
+    djui_panel_join_message_create(caller);
+#else
     gCoopNetDesiredLobby = (uint64_t)caller->tag;
     snprintf(gCoopNetPassword, 64, "%s", sPassword);
     network_reset_reconnect_and_rehost();
     network_set_system(NS_COOPNET);
     network_init(NT_CLIENT, false);
     djui_panel_join_message_create(caller);
+#endif
 }
 
 void djui_panel_join_query(uint64_t aLobbyId, UNUSED uint64_t aOwnerId, uint16_t aConnections, uint16_t aMaxConnections, UNUSED const char* aGame, const char* aVersion, const char* aHostName, const char* aMode, const char* aDescription) {
@@ -129,12 +148,21 @@ void djui_panel_join_lobbies_on_destroy(UNUSED struct DjuiBase* caller) {
     }
 }
 
+static bool djui_panel_join_lobbies_do_query(const char* password) {
+#ifdef TARGET_WEB
+    (void)password;
+    return ns_websocket_query(djui_panel_join_query, djui_panel_join_query_finish);
+#else
+    return ns_coopnet_query(djui_panel_join_query, djui_panel_join_query_finish, password);
+#endif
+}
+
 void djui_panel_join_lobbies_refresh(UNUSED struct DjuiBase* caller) {
     djui_base_destroy_children(&sLobbyLayout->base);
     djui_text_set_text(sRefreshButton->text, DLANG(LOBBIES, REFRESHING));
     djui_base_set_enabled(&sRefreshButton->base, false);
     djui_paginated_update_page_buttons(sLobbyPaginated);
-    ns_coopnet_query(djui_panel_join_query, djui_panel_join_query_finish, sPassword);
+    djui_panel_join_lobbies_do_query(sPassword);
 }
 
 void djui_panel_join_lobbies_value_changed(UNUSED struct DjuiBase* caller) {
@@ -145,10 +173,12 @@ void djui_panel_join_lobbies_create(struct DjuiBase* caller, const char* passwor
     if (sPassword) { free(sPassword); sPassword = NULL; }
     sPassword = strdup(password);
     bool private = (strlen(password) > 0);
+#ifdef COOPNET
     if (!private && configRulesVersion != RULES_VERSION) {
         djui_panel_rules_create(caller);
         return;
     }
+#endif
 
     djui_panel_join_lobby_description_create();
 
@@ -162,7 +192,7 @@ void djui_panel_join_lobbies_create(struct DjuiBase* caller, const char* passwor
         sLobbyLayout = sLobbyPaginated->layout;
         djui_flow_layout_set_margin(sLobbyLayout, 4);
 
-        bool querying = ns_coopnet_query(djui_panel_join_query, djui_panel_join_query_finish, password);
+        bool querying = djui_panel_join_lobbies_do_query(password);
         if (!querying) {
             struct DjuiText* text = djui_text_create(&sLobbyLayout->base, DLANG(NOTIF, COOPNET_CONNECTION_FAILED));
             djui_base_set_size_type(&text->base, DJUI_SVT_RELATIVE, DJUI_SVT_RELATIVE);
@@ -170,7 +200,9 @@ void djui_panel_join_lobbies_create(struct DjuiBase* caller, const char* passwor
             djui_text_set_alignment(text, DJUI_HALIGN_CENTER, DJUI_VALIGN_CENTER);
         }
 
+#ifdef COOPNET
         if (!private) { djui_button_create(body, DLANG(RULES, RULES), DJUI_BUTTON_STYLE_NORMAL, djui_panel_rules_create); }
+#endif
 
         struct DjuiRect* rect2 = djui_rect_container_create(body, 64);
         {
